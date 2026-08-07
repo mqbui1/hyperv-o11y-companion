@@ -71,7 +71,7 @@ collection mechanism with a distinct blast radius — see
 | 0 | `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) — Windows Service polling SCVMM | Central SCVMM console box (`CULSPLUNKO11Y01`) | #1 (power-state, SOLVED), #8 (guest_os, SOLVED) |
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
-| 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`); does not yet cover #2 |
+| 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
 | 1.6 | Windows Event Forwarding | Centralized collector receiving forwarded events | Guest/host event visibility without per-VM collector deployment |
 | 2 | Splunk OTel Collector, `guest-vm-config.yaml` | **Ruled out for this customer** — not opt-in, not fleet-wide, not deployed at all | Kept for reference only; does not close #2/#4 for this engagement |
 
@@ -160,13 +160,15 @@ if other event-log channels need to become alertable — see
 
 - `terraform/main.tf` — `signalfx` provider + `signalfx_dashboard_group.hyperv`
 - `terraform/dashboards.tf` — two dashboards: "Hypervisor Overview" (Tier 1
-  only, one row per host) and "VM Detail" (Tier 1 VM metrics; the Tier 2
-  guest disk chart is present for reference only — Tier 2 is ruled out for
-  this customer, see `docs/limitations.md` item 3)
+  only, one row per host) and "VM Detail" (Tier 1 VM metrics; the guest
+  filesystem chart now points at Tier 1.5's real
+  `vm.guest.filesystem.used_percent` metric, not the old Tier 2 placeholder
+  — see gap #4)
 - `terraform/detectors.tf` — VM health critical, hypervisor CPU high, VM
   memory pressure high, VM storage latency high (unit confirmed via
   real-fleet empirical analysis and enabled at a 20ms threshold — gap #5,
-  SOLVED), VMMS migration failures
+  SOLVED), guest filesystem used high (Tier 1.5, gap #4 — ships `disabled =
+  true`, enable alongside `guest_probe.enabled`), VMMS migration failures
 
 All chart/detector `program_text` filters on `host.type`, per the table
 above — this is why getting the resource attribute strategy right matters

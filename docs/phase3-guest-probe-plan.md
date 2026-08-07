@@ -71,6 +71,14 @@ loop, not a new service.
 - VM enumeration is reused from the existing disk-map builder
   (`state.get().ByID`, populated by `internal/hyperv.BuildDiskMap`) — no
   separate `Get-VM` shell-out needed for the probe ticker itself.
+- `otel-collector/hypervisor-host-config.yaml` now has an `otlp` receiver
+  (`0.0.0.0:4317`/`4318`, matching `host-companion.yaml`'s default
+  `otlp.endpoint`) and a `metrics/vm_companion` pipeline that promotes
+  `vm.name` to a resource attribute and tags `host.type`/`host.name` the
+  same way `metrics/vm` does for Tier 1's own metrics, so this metric lands
+  on the same Splunk Observability Cloud entity — this receiver previously
+  didn't exist, so even the existing (Phase 2) `vm.disk.*` metrics had
+  nowhere to land before this change.
 
 ## Live migration safety (no explicit dedup logic needed)
 
@@ -117,7 +125,10 @@ confirm:
 ## Non-goals for Phase 3
 
 - Linux guest support — PowerShell Direct is Windows-guest-only; Linux VMs
-  needing in-guest filesystem visibility still require Tier 2.
-- Any metric beyond guest filesystem used % without a separate ask — Tier
-  1.5 is scoped narrowly to close gap #4 for VMs that don't warrant Tier 2,
-  not to become a general-purpose in-guest collector.
+  needing in-guest filesystem/memory visibility still require Tier 2.
+- Any metric beyond guest filesystem used % (gap #4) and guest memory used
+  % (gap #2) without a separate ask — Tier 1.5 is scoped to these two
+  specific gaps for VMs that don't warrant Tier 2, not to become a
+  general-purpose in-guest collector. Both are gathered in one
+  `Invoke-Command` session per VM per cycle (`internal/guestprobe.Sample`),
+  not two, to minimize PowerShell Direct session overhead at fleet scale.

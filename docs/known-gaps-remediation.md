@@ -29,17 +29,20 @@ exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
 this counter, so `vm_memory_pressure_high` in `detectors.tf` silently never
 fires for them — not a bug, a coverage gap.
 
-**Status: open.** Tier 2's `hostmetrics/memory` scraper would close this for
-opted-in static-memory VMs, but this customer has ruled out deploying any
-collector inside guest VMs, opt-in or otherwise — Tier 2 is not part of the
-proposed solution (see gap #4 and `guest-vm-config.yaml`'s header comment).
-Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`) is now
-implemented in code, but scoped narrowly to gap #4 (guest filesystem used
-%) for now — see `docs/phase3-guest-probe-plan.md`'s "Non-goals" section.
-Extending `guestprobe.SampleFilesystem`'s `Invoke-Command -VMId` pattern to
-also query in-guest memory (e.g. `Get-Counter '\Memory\Available Bytes'`
-inside the guest) would be a small, structurally similar follow-on once
-Tier 1.5's go/no-go criteria are validated — not yet built.
+**Status: implemented in `hyperv-host-companion`, disabled by default.**
+Tier 2's `hostmetrics/memory` scraper would close this for opted-in
+static-memory VMs, but this customer has ruled out deploying any collector
+inside guest VMs, opt-in or otherwise — Tier 2 is not part of the proposed
+solution (see gap #4 and `guest-vm-config.yaml`'s header comment). Tier 1.5
+(`internal/guestprobe.Sample`) now also queries `Win32_OperatingSystem`
+inside the guest (`TotalVisibleMemorySize`/`FreePhysicalMemory`, both in
+KB) in the same `Invoke-Command` session used for gap #4, and exports
+`vm.guest.memory.used_percent`. This is the guest's own OS-reported memory
+usage, not Hyper-V's Dynamic-Memory-only "Current Pressure" counter, so it
+works for static-memory VMs — the whole point of this gap. Same caveat as
+gap #4: ships with `guest_probe.enabled: false`, and should stay off until
+the go/no-go criteria in `docs/phase3-guest-probe-plan.md` are validated.
+Marking this gap "OPEN" rather than "SOLVED" until that validation happens.
 
 ## 3. ~19–23% of VHD instances unattributed (fleet match rate 77–81%) — SOLVED
 `Get-VMHardDiskDrive` (used by the customer's `build-hyperv-vm-disk-map.ps1`)
@@ -81,6 +84,14 @@ false` and should stay off until the go/no-go criteria in
 (session latency/load at scale, guest Integration Services coverage, and
 whether a single shared guest-local credential is acceptable). Marking this
 gap "OPEN" rather than "SOLVED" until that validation happens.
+
+`otel-collector/hypervisor-host-config.yaml` now has an `otlp` receiver and
+a `metrics/vm_companion` pipeline to receive and correctly tag
+`vm.disk.*`/`vm.guest.filesystem.used_percent` from `hyperv-host-companion`
+(previously this receiver didn't exist at all — Phase 2's disk metrics had
+nowhere to land). `terraform/dashboards.tf`'s VM Detail dashboard and a new
+`vm_guest_filesystem_used_high` detector (ships `disabled = true`) in
+`terraform/detectors.tf` are wired to the real metric name.
 
 **Historical billing context (why Tier 2 was originally scoped opt-in
 rather than fleet-wide — now moot, since it's ruled out entirely):** one

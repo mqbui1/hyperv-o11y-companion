@@ -92,6 +92,19 @@ service:
       receivers: [otlp]
       processors: [filter/vm_noise, transform/vm_name, groupbyattrs/vm, resource/vm_tag, transform/vm_hostname, batch]
       exporters: [debug]
+    # Mirrors metrics/vm_companion in ../hypervisor-host-config.yaml — no
+    # filter/vm_noise or transform/vm_name needed here since
+    # hyperv-host-companion (internal/hyperv, internal/guestprobe) already
+    # sends a resolved vm.name attribute, not a raw Perfmon instance string.
+    # In this test harness both pipelines share the same otlp receiver (the
+    # real config uses two separate receivers, windowsperfcounters/vm vs
+    # otlp, so there's no double-export risk there) — sending a payload
+    # here will print through metrics/vm too; that's expected duplication
+    # in this harness, not a production behavior.
+    metrics/vm_companion:
+      receivers: [otlp]
+      processors: [groupbyattrs/vm, resource/vm_tag, transform/vm_hostname, batch]
+      exporters: [debug]
     logs/hyperv_events:
       receivers: [otlp]
       processors: [batch]

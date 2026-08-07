@@ -66,6 +66,47 @@ def metric_payload(metric_name, unit, instance_values):
     }
 
 
+def resolved_metric_payload(metric_name, unit, extra_attrs):
+    """One metric, one datapoint with already-resolved attributes (e.g.
+    vm.name) — simulates hyperv-host-companion's OTLP output
+    (internal/hyperv, internal/guestprobe), which never has a raw Perfmon
+    'instance' string to parse, unlike metric_payload() above which mimics
+    windowsperfcounters."""
+    return {
+        "resourceMetrics": [
+            {
+                "resource": {"attributes": []},
+                "scopeMetrics": [
+                    {
+                        "scope": {},
+                        "metrics": [
+                            {
+                                "name": metric_name,
+                                "unit": unit,
+                                "gauge": {
+                                    "dataPoints": [
+                                        {
+                                            "asDouble": 92.5,
+                                            "timeUnixNano": now_ns(),
+                                            "attributes": [
+                                                {
+                                                    "key": k,
+                                                    "value": {"stringValue": v},
+                                                }
+                                                for k, v in extra_attrs.items()
+                                            ],
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
 def log_payload(event_id):
     return {
         "resourceLogs": [
@@ -139,6 +180,31 @@ def main():
 
     print("Sending a synthetic VMMS Event ID 21026 (expect hyperv.vmms.migration_failures=1)...")
     requests.post(f"{ENDPOINT}/v1/logs", json=log_payload(21026), timeout=5)
+
+    print("Sending a hyperv-host-companion-style guest filesystem sample")
+    print("(vm.name already resolved, no raw 'instance' string — gap #4, Tier 1.5)...")
+    print("Expect host.name=GuestProbeVM, host.type=hypervisor_managed_vm, drive_letter=C preserved.")
+    requests.post(
+        f"{ENDPOINT}/v1/metrics",
+        json=resolved_metric_payload(
+            "vm.guest.filesystem.used_percent",
+            "%",
+            {"vm.name": "GuestProbeVM", "drive_letter": "C"},
+        ),
+        timeout=5,
+    )
+
+    print("Sending a hyperv-host-companion-style guest memory sample (gap #2, Tier 1.5)...")
+    print("Expect host.name=GuestProbeVM, host.type=hypervisor_managed_vm.")
+    requests.post(
+        f"{ENDPOINT}/v1/metrics",
+        json=resolved_metric_payload(
+            "vm.guest.memory.used_percent",
+            "%",
+            {"vm.name": "GuestProbeVM"},
+        ),
+        timeout=5,
+    )
 
     print("\nDone. Check the collector container's stdout for the debug exporter output.")
     print("Verify each datapoint's resource host.name matches the 'expect' comment above,")

@@ -39,6 +39,39 @@ func (s FilesystemSample) UsedPercent() (float64, bool) {
 	return used / s.Size * 100, true
 }
 
+// MemorySample is the guest's own OS-reported physical memory usage
+// (Win32_OperatingSystem, values natively in KB). Unlike Hyper-V's
+// "Hyper-V Dynamic Memory VM" Current Pressure counter (Tier 1), this
+// works for static-memory VMs too — it's the guest asking itself how much
+// memory it's using, not a Dynamic Memory balloon-driver artifact — which
+// is what closes gap #2 for static-memory VMs specifically.
+type MemorySample struct {
+	TotalVisibleMemoryKB float64 `json:"TotalVisibleMemoryKB"`
+	FreePhysicalMemoryKB float64 `json:"FreePhysicalMemoryKB"`
+}
+
+// UsedPercent returns the used-memory percentage, or false if
+// TotalVisibleMemoryKB is zero.
+func (m MemorySample) UsedPercent() (float64, bool) {
+	if m.TotalVisibleMemoryKB <= 0 {
+		return 0, false
+	}
+	used := m.TotalVisibleMemoryKB - m.FreePhysicalMemoryKB
+	return used / m.TotalVisibleMemoryKB * 100, true
+}
+
+// GuestSample is one PowerShell Direct round trip's combined guest read.
+// Filesystem (gap #4) and Memory (gap #2) are gathered in a SINGLE
+// Invoke-Command session per VM per sample cycle, not two — the session
+// itself is the expensive/risky part at fleet scale (go/no-go criterion
+// #1 in docs/phase3-guest-probe-plan.md), not what's queried once inside
+// one, so bundling every in-guest fact this repo needs into one round trip
+// is the right default shape going forward.
+type GuestSample struct {
+	Filesystem []FilesystemSample `json:"Filesystem"`
+	Memory     MemorySample       `json:"Memory"`
+}
+
 // script is invoked as `& { param($VMId, $User, $PassEnvName) ... }
 // $VMId $User $PassEnvName` — the password is passed via a process
 // environment variable, not a command-line argument, so it never appears
@@ -54,9 +87,17 @@ $sec = ConvertTo-SecureString -String $pass -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
 try {
     Invoke-Command -VMId $VMId -Credential $cred -ScriptBlock {
-        Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.DriveLetter } |
+        $fs = Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.DriveLetter } |
             Select-Object DriveLetter, Size, SizeRemaining
-    } | ConvertTo-Json -Depth 3
+        $os = Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory
+        [PSCustomObject]@{
+            Filesystem = @($fs)
+            Memory     = [PSCustomObject]@{
+                TotalVisibleMemoryKB = $os.TotalVisibleMemorySize
+                FreePhysicalMemoryKB = $os.FreePhysicalMemory
+            }
+        }
+    } | ConvertTo-Json -Depth 4
 } finally {
     Remove-Variable pass, sec, cred -ErrorAction SilentlyContinue
 }
@@ -64,11 +105,12 @@ try {
 
 const passEnvName = "HYPERV_O11Y_GUESTPROBE_PASS"
 
-// SampleFilesystem queries fixed-volume capacity inside the guest VM
-// identified by vmID, over VMBus via PowerShell Direct. ctx should carry a
-// per-VM timeout (see docs/phase3-guest-probe-plan.md go/no-go criterion
-// #1 — Invoke-Command -VMId is not free at fleet scale).
-func SampleFilesystem(ctx context.Context, vmID string, cred creds.Credential) ([]FilesystemSample, error) {
+// Sample queries fixed-volume capacity (gap #4) and OS-reported memory
+// usage (gap #2) inside the guest VM identified by vmID, in one
+// PowerShell Direct session over VMBus. ctx should carry a per-VM timeout
+// (see docs/phase3-guest-probe-plan.md go/no-go criterion #1 —
+// Invoke-Command -VMId is not free at fleet scale).
+func Sample(ctx context.Context, vmID string, cred creds.Credential) (*GuestSample, error) {
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, vmID, cred.Username, passEnvName)
 	cmd.Env = append(os.Environ(), passEnvName+"="+cred.Password)
 
@@ -78,27 +120,13 @@ func SampleFilesystem(ctx context.Context, vmID string, cred creds.Credential) (
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("powershell (Invoke-Command -VMId %s): %w: %s", vmID, err, stderr.String())
 	}
-	return decodeMaybeArray[FilesystemSample](stdout.Bytes())
-}
-
-// decodeMaybeArray handles ConvertTo-Json's quirk of emitting a bare object
-// (not wrapped in []) when the source collection has exactly one element —
-// same helper as internal/hyperv and internal/scvmm.
-func decodeMaybeArray[T any](data []byte) ([]T, error) {
-	trimmed := bytes.TrimSpace(data)
+	var out GuestSample
+	trimmed := bytes.TrimSpace(stdout.Bytes())
 	if len(trimmed) == 0 {
-		return nil, nil
+		return &out, nil
 	}
-	if trimmed[0] == '[' {
-		var out []T
-		if err := json.Unmarshal(trimmed, &out); err != nil {
-			return nil, fmt.Errorf("decoding array: %w", err)
-		}
-		return out, nil
+	if err := json.Unmarshal(trimmed, &out); err != nil {
+		return nil, fmt.Errorf("decoding guest sample: %w", err)
 	}
-	var single T
-	if err := json.Unmarshal(trimmed, &single); err != nil {
-		return nil, fmt.Errorf("decoding single object: %w", err)
-	}
-	return []T{single}, nil
+	return &out, nil
 }

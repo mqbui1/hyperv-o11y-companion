@@ -171,12 +171,25 @@ resource "signalfx_time_chart" "vm_network_throughput" {
   plot_type = "AreaChart"
 }
 
-resource "signalfx_time_chart" "guest_disk_free" {
-  name = "Guest Disk Free Space (%) — Tier 2 opt-in only: curated VM subset, requires guest-vm-config.yaml (see docs/known-gaps-remediation.md gap #4)"
+resource "signalfx_time_chart" "guest_filesystem_used" {
+  name = "Guest Filesystem Used (%) — Tier 1.5: PowerShell Direct, opt-in vm_include subset, disabled by default pending go/no-go (see docs/known-gaps-remediation.md gap #4, docs/phase3-guest-probe-plan.md)"
 
   program_text = <<-EOF
-    A = data('guest.disk.free_space', filter=filter('host.type', 'hypervisor_managed_vm')).mean(by=['host.name'])
-    A.publish(label='Guest Disk Free %')
+    A = data('vm.guest.filesystem.used_percent', filter=filter('host.type', 'hypervisor_managed_vm')).mean(by=['host.name', 'drive_letter'])
+    A.publish(label='Guest Filesystem Used %')
+  EOF
+
+  time_range = 3600
+
+  plot_type = "LineChart"
+}
+
+resource "signalfx_time_chart" "guest_memory_used" {
+  name = "Guest Memory Used (%) — Tier 1.5: PowerShell Direct, opt-in vm_include subset, disabled by default pending go/no-go (see docs/known-gaps-remediation.md gap #2, docs/phase3-guest-probe-plan.md). Covers static-memory VMs, unlike vm.memory.current_pressure above."
+
+  program_text = <<-EOF
+    A = data('vm.guest.memory.used_percent', filter=filter('host.type', 'hypervisor_managed_vm')).mean(by=['host.name'])
+    A.publish(label='Guest Memory Used %')
   EOF
 
   time_range = 3600
@@ -217,9 +230,16 @@ resource "signalfx_dashboard" "vm_detail" {
     height   = 3
   }
   chart {
-    chart_id = signalfx_time_chart.guest_disk_free.id
+    chart_id = signalfx_time_chart.guest_filesystem_used.id
     row      = 3
     column   = 6
+    width    = 6
+    height   = 3
+  }
+  chart {
+    chart_id = signalfx_time_chart.guest_memory_used.id
+    row      = 6
+    column   = 0
     width    = 6
     height   = 3
   }

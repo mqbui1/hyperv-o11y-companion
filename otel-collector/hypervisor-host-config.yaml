@@ -13,6 +13,14 @@
 #                          (vCPU %, assigned/pressure memory, vNIC throughput,
 #                          virtual disk file I/O) for ALL VMs on this host in a
 #                          single receiver — no per-VM config needed.
+#   metrics/vm_companion -> received via OTLP from the hyperv-host-companion
+#                          Windows Service also running on this host
+#                          (hyperv-o11y-companion repo): vm.disk.* (gap #3,
+#                          disk-map-corrected VHD attribution) and, once
+#                          guest_probe.enabled is flipped on after its
+#                          go/no-go decision, vm.guest.filesystem.used_percent
+#                          (Tier 1.5, gap #4) and vm.guest.memory.used_percent
+#                          (Tier 1.5, gap #2).
 #   logs/hyperv_events -> Hyper-V Windows Event Log channels
 #
 # Resource attribute strategy (read docs/architecture.md before changing):
@@ -246,6 +254,23 @@ receivers:
   windowseventlog/worker_admin:
     channel: Microsoft-Windows-Hyper-V-Worker-Admin
 
+  # ---------------------------------------------------------------------------
+  # Receives OTLP from hyperv-host-companion (Go Windows Service, same host —
+  # see hyperv-o11y-companion repo, config/host-companion.yaml's otlp.endpoint,
+  # default "http://localhost:4318"). Carries vm.disk.* (gap #3) and, once
+  # enabled, vm.guest.filesystem.used_percent (Tier 1.5, gap #4). Both are
+  # emitted with vm.name as a datapoint attribute (not yet a resource
+  # attribute) — metrics/vm_companion below promotes it the same way
+  # metrics/vm does for Tier 1's own Perfmon-sourced VM metrics, so both
+  # tiers' data lands on the same Splunk Observability Cloud entity.
+  # ---------------------------------------------------------------------------
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
 processors:
   batch:
     timeout: 10s
@@ -390,6 +415,15 @@ service:
     metrics/vm:
       receivers: [windowsperfcounters/vm]
       processors: [filter/vm_noise, transform/vm_name, transform/vm_storage_latency_scale, groupbyattrs/vm, resource/vm_tag, transform/vm_hostname, batch]
+      exporters: [signalfx]
+    # hyperv-host-companion's OTLP metrics (vm.disk.*, vm.guest.filesystem.used_percent)
+    # already carry a resolved vm.name datapoint attribute (no noisy Perfmon
+    # instance string to parse, unlike metrics/vm above) — just promote it to
+    # a resource attribute and apply the same host.type/host.name tagging so
+    # this lands on the same entity as Tier 1's VM metrics.
+    metrics/vm_companion:
+      receivers: [otlp]
+      processors: [groupbyattrs/vm, resource/vm_tag, transform/vm_hostname, batch]
       exporters: [signalfx]
     metrics/migration_failures:
       receivers: [count/migration_failures]

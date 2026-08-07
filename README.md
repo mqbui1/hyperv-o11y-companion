@@ -74,7 +74,7 @@ docs/
 | # | Gap | Status |
 |---|---|---|
 | 1 | No power-state/availability monitoring | Solved — `hyperv-scvmm-poller` |
-| 2 | Static-memory VMs invisible to memory pressure | **Open** — Tier 1.5 doesn't cover this metric yet (see `docs/phase3-guest-probe-plan.md`) |
+| 2 | Static-memory VMs invisible to memory pressure | **Open** — Tier 1.5 implemented, disabled pending go/no-go |
 | 3 | ~20% of VHD instances unattributed | Solved (accepted residual) — `hyperv-host-companion` |
 | 4 | No guest filesystem used % visible | **Open** — Tier 1.5 implemented, disabled pending go/no-go |
 | 5 | Disk latency unit unconfirmed | Solved — empirically verified, ×1000 scale correction |

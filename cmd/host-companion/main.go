@@ -104,6 +104,12 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 	if err != nil {
 		return err
 	}
+	guestMemUsedGauge, err := exp.Meter.Float64Gauge("vm.guest.memory.used_percent",
+		metric.WithDescription("Guest OS-reported memory used (%), sampled inside the guest via PowerShell Direct — Tier 1.5, gap #2 (works for static-memory VMs, unlike Hyper-V's Dynamic Memory-only Current Pressure counter)"),
+		metric.WithUnit("%"))
+	if err != nil {
+		return err
+	}
 
 	state := &diskMapState{}
 	buildDiskMap(ctx, cfg, state) // populate once at startup before the first sample cycle
@@ -134,7 +140,7 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 		case <-sampleTicker.C:
 			sampleAndExport(ctx, cfg, state, latencyGauge, readGauge, writeGauge)
 		case <-guestProbeC:
-			sampleGuestFilesystems(ctx, cfg, state, guestFsUsedGauge)
+			sampleGuestProbe(ctx, cfg, state, guestFsUsedGauge, guestMemUsedGauge)
 		}
 	}
 }
@@ -210,16 +216,19 @@ func matchRate(matched, unmatched int) float64 {
 	return float64(matched) / float64(total) * 100
 }
 
-// sampleGuestFilesystems closes gap #4 (guest filesystem used %) via Tier
-// 1.5: for each VM in the disk map matching cfg.GuestProbe.VMInclude,
-// shells into the guest over VMBus (guestprobe.SampleFilesystem,
-// PowerShell Direct — no guest network path, no in-guest agent) and
-// exports vm.guest.filesystem.used_percent per fixed volume. Reuses the
-// disk map's VM enumeration (internal/hyperv.BuildDiskMap) rather than a
-// separate Get-VM call. One VM's probe failing (e.g. missing guest
-// Integration Services) does not block the others — logged and skipped,
-// same fallback philosophy as buildDiskMap/sampleAndExport above.
-func sampleGuestFilesystems(ctx context.Context, cfg *config.HostCompanionConfig, state *diskMapState, gauge metric.Float64Gauge) {
+// sampleGuestProbe closes gap #4 (guest filesystem used %) and gap #2
+// (memory pressure, including static-memory VMs) via Tier 1.5: for each VM
+// in the disk map matching cfg.GuestProbe.VMInclude, shells into the guest
+// over VMBus once (guestprobe.Sample — a single Invoke-Command session
+// gathering both facts, not two; PowerShell Direct sessions are the
+// expensive part at fleet scale, not what's queried inside one) and
+// exports vm.guest.filesystem.used_percent per fixed volume plus
+// vm.guest.memory.used_percent. Reuses the disk map's VM enumeration
+// (internal/hyperv.BuildDiskMap) rather than a separate Get-VM call. One
+// VM's probe failing (e.g. missing guest Integration Services) does not
+// block the others — logged and skipped, same fallback philosophy as
+// buildDiskMap/sampleAndExport above.
+func sampleGuestProbe(ctx context.Context, cfg *config.HostCompanionConfig, state *diskMapState, fsGauge, memGauge metric.Float64Gauge) {
 	m := state.get()
 	if m == nil {
 		log.Printf("guest probe sample skipped: disk map not yet built")
@@ -237,22 +246,25 @@ func sampleGuestFilesystems(ctx context.Context, cfg *config.HostCompanionConfig
 			continue
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, cfg.GuestProbe.SampleTimeout)
-		samples, err := guestprobe.SampleFilesystem(probeCtx, vmID, cred)
+		sample, err := guestprobe.Sample(probeCtx, vmID, cred)
 		cancel()
 		if err != nil {
 			log.Printf("guest probe: vm=%s: %v", entry.VMName, err)
 			continue
 		}
-		for _, s := range samples {
+		for _, s := range sample.Filesystem {
 			pct, ok := s.UsedPercent()
 			if !ok {
 				continue
 			}
-			gauge.Record(ctx, pct,
+			fsGauge.Record(ctx, pct,
 				metric.WithAttributes(
 					attribute.String("vm.name", entry.VMName),
 					attribute.String("drive_letter", s.DriveLetter),
 				))
+		}
+		if pct, ok := sample.Memory.UsedPercent(); ok {
+			memGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
 		}
 	}
 }
