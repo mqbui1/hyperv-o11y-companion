@@ -9,7 +9,8 @@ that used to live in separate repos/scripts into one place:
    (`collect-scvmm-metrics.ps1` / `run-collect-scvmm-metrics.ps1`,
    `enrich-vm-guest-os.ps1` / `run-enrich-vm-guest-os.ps1`,
    `build-hyperv-vm-disk-map.ps1` / `collect-hyperv-vm-disk.ps1`), plus the
-   design for the Tier 1.5 PowerShell Direct guest probe. Zero Windows Task
+   the Tier 1.5 PowerShell Direct guest probe (implemented, disabled by
+   default pending go/no-go — see below). Zero Windows Task
    Scheduler entries.
 2. **OTel Collector configs + Terraform dashboards/detectors** (`otel-collector/`,
    `terraform/`) — the host-side (Tier 1) collection pipeline and the
@@ -27,7 +28,9 @@ deploying any collector inside guest VMs, opt-in or otherwise. Tier 2
 only (e.g. future engagements without this constraint) and is **not** part
 of the proposed solution here. Gaps #2 (static-memory VM memory pressure)
 and #4 (guest filesystem used %) are therefore tracked as **open**, pending
-a go/no-go decision on Tier 1.5 (PowerShell Direct guest probe — see
+a go/no-go decision on Tier 1.5 (PowerShell Direct guest probe —
+implemented in `internal/guestprobe`, wired into `host-companion`, but
+shipped with `guest_probe.enabled: false`; see
 `docs/phase3-guest-probe-plan.md`), which requires nothing to be deployed
 inside the guest.
 
@@ -61,7 +64,8 @@ docs/
   deployment-guide.md            Delivery, install, configure, test/verify
   parity-testing-and-cutover.md  Shadow -> diff -> cutover plan (old scripts
                                   -> new services)
-  phase3-guest-probe-plan.md     Tier 1.5 design (the path for gaps #2/#4)
+  phase3-guest-probe-plan.md     Tier 1.5 (implemented, gap #4; disabled by
+                                  default pending go/no-go)
   nested-hyperv-azure-test-plan.md  Real-hardware validation plan (Azure)
 ```
 
@@ -70,9 +74,9 @@ docs/
 | # | Gap | Status |
 |---|---|---|
 | 1 | No power-state/availability monitoring | Solved — `hyperv-scvmm-poller` |
-| 2 | Static-memory VMs invisible to memory pressure | **Open** — blocked on Tier 1.5 |
+| 2 | Static-memory VMs invisible to memory pressure | **Open** — Tier 1.5 doesn't cover this metric yet (see `docs/phase3-guest-probe-plan.md`) |
 | 3 | ~20% of VHD instances unattributed | Solved (accepted residual) — `hyperv-host-companion` |
-| 4 | No guest filesystem used % visible | **Open** — blocked on Tier 1.5 |
+| 4 | No guest filesystem used % visible | **Open** — Tier 1.5 implemented, disabled pending go/no-go |
 | 5 | Disk latency unit unconfirmed | Solved — empirically verified, ×1000 scale correction |
 | 6 | Malformed `vm.name` from Perfmon `#N` suffixing | Solved — `otel-collector/hypervisor-host-config.yaml` |
 | 7 | ~20% of VMs missing network series | Solved — wrong counter name fixed |
@@ -87,7 +91,7 @@ See `docs/known-gaps-remediation.md` for the full per-gap writeup.
 | Binary | Runs where | Replaces | Status |
 |---|---|---|---|
 | `scvmm-poller` | Central SCVMM console box (`CULSPLUNKO11Y01`) | `collect-scvmm-metrics.ps1` + `enrich-vm-guest-os.ps1` and their wrappers/scheduled tasks | **Phase 1 — scaffolded** |
-| `host-companion` | Every Hyper-V host, alongside the Splunk OTel Collector | `build-hyperv-vm-disk-map.ps1` + `collect-hyperv-vm-disk.ps1` (Phase 2, scaffolded here), and (once Tier 1.5 goes green) the PowerShell Direct guest probe (Phase 3 — design only, see `docs/phase3-guest-probe-plan.md`; not started) | **Phase 2 — scaffolded** |
+| `host-companion` | Every Hyper-V host, alongside the Splunk OTel Collector | `build-hyperv-vm-disk-map.ps1` + `collect-hyperv-vm-disk.ps1` (Phase 2, scaffolded here), and the PowerShell Direct guest probe (Phase 3, implemented in `internal/guestprobe`, disabled by default — see `docs/phase3-guest-probe-plan.md`) | **Phase 2 — scaffolded; Phase 3 — implemented, disabled pending go/no-go** |
 
 Both binaries are installed as native Windows Services (`golang.org/x/sys/windows/svc`)
 via an MSI (see `installer/`, WiX v4 source with a two-feature scaffold — one

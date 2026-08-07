@@ -14,3 +14,10 @@ disk_map:
 disk_metrics:
   sample_interval: 60s
   latency_scale: 1000.0  # seconds -> ms; empirically confirmed via 1,890-series real-fleet sample, see docs/known-gaps-remediation.md gap #5
+
+guest_probe:   # Tier 1.5 — PowerShell Direct, closes gap #4 (guest filesystem used %)
+  enabled: false   # leave false until the go/no-go criteria in docs/phase3-guest-probe-plan.md are validated
+  vm_include: []   # opt-in curated subset by VM name, e.g. ["WebServer*"]; empty = no VMs probed even if enabled
+  sample_interval: 5m   # PowerShell Direct sessions are heavier than local Get-Counter; sample less often
+  sample_timeout: 30s   # per-VM timeout; a hung guest (missing/stale Integration Services) must not block other VMs
+  credential_name: "hyperv-o11y/guest-probe"   # Windows Credential Manager generic credential, valid inside the guest

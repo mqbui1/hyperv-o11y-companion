@@ -1,11 +1,12 @@
 # Phase 3 — Tier 1.5 Guest Probe Absorption Plan
 
-Status: **not started**. Tier 1.5 (PowerShell Direct guest probe) is
-currently a documented concept in the five-tier architecture, not running
-code — there is no existing probe implementation anywhere in this
-engagement to port. This document is the design for what Phase 3 will build
-once the underlying PowerShell Direct POC reaches a go decision, so that
-`host-companion` doesn't need a third rewrite later.
+Status: **implemented, disabled by default pending go/no-go**. Tier 1.5
+(PowerShell Direct guest probe) is now a third ticker in
+`cmd/host-companion/main.go`'s `runService` loop
+(`internal/guestprobe/probe.go`), gated by `guest_probe.enabled: false` in
+`config/host-companion.yaml` — the code exists and can be exercised, but
+should not be flipped on in production until the go/no-go criteria below
+are validated against the real fleet.
 
 ## What Tier 1.5 is and why it exists
 
@@ -38,28 +39,63 @@ deploying anything inside the guest at all.
 Phase 3 adds a third ticker to `cmd/host-companion/main.go`'s `runService`
 loop, not a new service.
 
-## Planned shape
+## Implemented shape
 
 - `internal/guestprobe/probe.go` — `SampleFilesystem(ctx, vmID string,
   cred creds.Credential) ([]FilesystemSample, error)`, shelling to
   `Invoke-Command -VMId <vmID> -Credential ... -ScriptBlock { Get-Volume |
-  Select DriveLetter, Size, SizeRemaining }` and parsing JSON, same
-  `powershell.exe -NoProfile -Command "... | ConvertTo-Json"` pattern as
-  every other adapter in this repo.
+  Where DriveType -eq Fixed | Select DriveLetter, Size, SizeRemaining }`
+  and parsing JSON, same `powershell.exe -NoProfile -Command "... |
+  ConvertTo-Json"` pattern as every other adapter in this repo. The guest
+  credential's password is passed via a process environment variable, not
+  a command-line argument, so it never appears in a process listing.
 - Credential: a guest-local read-only account, read from Windows Credential
-  Manager via the existing `internal/creds` package (one more named
-  credential, e.g. `guest-probe-cred`) — **not** a per-VM credential list;
-  the plan assumes one shared guest-local account provisioned fleet-wide
-  (via the customer's existing guest-VM provisioning process), matching how
-  gap #4's opt-in Tier 2 subset is scoped today.
-- New config section in `host-companion.yaml`: `guest_probe.enabled`,
-  `guest_probe.vm_include` (opt-in list, mirroring Tier 2's curated-subset
-  framing — this is not a fleet-wide default any more than Tier 2 is),
-  `guest_probe.sample_interval`.
-- New metric: `vm.guest.filesystem.used_percent`, tagged with the same
-  `vm.name` used everywhere else in this repo, so it lands on the same
-  Splunk Observability Cloud entity as the VM's Tier 1 metrics without any
-  additional correlation work.
+  Manager via the existing `internal/creds` package
+  (`guest_probe.credential_name`, default `hyperv-o11y/guest-probe`) —
+  **not** a per-VM credential list; this assumes one shared guest-local
+  account provisioned fleet-wide (via the customer's existing guest-VM
+  provisioning process). Whether that single-shared-credential model is
+  acceptable is go/no-go criterion #3 below, not yet resolved.
+- Config section in `host-companion.yaml`: `guest_probe.enabled` (default
+  `false`), `guest_probe.vm_include` (opt-in glob-pattern list against VM
+  name, e.g. `["WebServer*"]` — empty means no VMs are probed even when
+  enabled; there is no fleet-wide default), `guest_probe.sample_interval`
+  (default 5m — PowerShell Direct sessions are heavier than local
+  `Get-Counter`, so this samples less often than the disk sampler),
+  `guest_probe.sample_timeout` (default 30s per VM, so one hung guest with
+  stale Integration Services can't block the others).
+- Metric: `vm.guest.filesystem.used_percent`, tagged with the same
+  `vm.name` used everywhere else in this repo (plus `drive_letter`), so it
+  lands on the same Splunk Observability Cloud entity as the VM's Tier 1
+  metrics without any additional correlation work.
+- VM enumeration is reused from the existing disk-map builder
+  (`state.get().ByID`, populated by `internal/hyperv.BuildDiskMap`) — no
+  separate `Get-VM` shell-out needed for the probe ticker itself.
+
+## Live migration safety (no explicit dedup logic needed)
+
+Metrics are keyed by the `vm.name` dimension, not a host+VM composite key —
+same as every other metric in this repo. `host-companion` only probes VMs
+that appear in its **local** `Get-VM` enumeration (via the shared disk
+map), and Hyper-V VM ownership is exclusive to one host at a time. So when
+a VM live-migrates:
+
+- The **source** host's next disk-map rebuild drops the VM from its local
+  enumeration — its guest-probe ticker simply stops querying that VM ID
+  (which is now invalid on that host anyway).
+- The **destination** host's next disk-map rebuild picks the VM up and its
+  guest-probe ticker starts querying it there.
+
+There is no window where both hosts are actively probing the same VM
+simultaneously in steady state, and no per-VM subscription/registration
+object that needs explicit cleanup on migration — the dimension-keyed MTS
+model in Splunk Observability Cloud just continues the same time series
+under whichever host is currently reporting it. The only gap is the window
+between migration completing and the next `disk_map.build_interval` tick on
+each host (default 1h) — during that window the destination host won't yet
+probe the VM. Shortening `disk_map.build_interval` narrows this window at
+the cost of more frequent `Get-VM` shell-outs; not yet tuned against a real
+migration-frequency profile.
 
 ## Go/no-go criteria (owned by the POC, not this repo)
 

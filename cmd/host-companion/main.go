@@ -23,12 +23,15 @@ import (
 	"context"
 	"flag"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rccl/hyperv-o11y-companion/internal/config"
+	"github.com/rccl/hyperv-o11y-companion/internal/creds"
 	"github.com/rccl/hyperv-o11y-companion/internal/diskattr"
+	"github.com/rccl/hyperv-o11y-companion/internal/guestprobe"
 	"github.com/rccl/hyperv-o11y-companion/internal/hyperv"
 	"github.com/rccl/hyperv-o11y-companion/internal/metricsexport"
 	"github.com/rccl/hyperv-o11y-companion/internal/winsvc"
@@ -95,6 +98,12 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 	if err != nil {
 		return err
 	}
+	guestFsUsedGauge, err := exp.Meter.Float64Gauge("vm.guest.filesystem.used_percent",
+		metric.WithDescription("Guest filesystem used space (%), sampled inside the guest via PowerShell Direct — Tier 1.5, gap #4"),
+		metric.WithUnit("%"))
+	if err != nil {
+		return err
+	}
 
 	state := &diskMapState{}
 	buildDiskMap(ctx, cfg, state) // populate once at startup before the first sample cycle
@@ -104,6 +113,18 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 	sampleTicker := time.NewTicker(cfg.DiskMetrics.SampleInterval)
 	defer sampleTicker.Stop()
 
+	var guestProbeTicker *time.Ticker
+	if cfg.GuestProbe.Enabled && len(cfg.GuestProbe.VMInclude) > 0 {
+		guestProbeTicker = time.NewTicker(cfg.GuestProbe.SampleInterval)
+		defer guestProbeTicker.Stop()
+	}
+	guestProbeC := func() <-chan time.Time {
+		if guestProbeTicker == nil {
+			return nil // nil channel: this case is simply never selected, cleanly disabling the tier
+		}
+		return guestProbeTicker.C
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -112,6 +133,8 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 			buildDiskMap(ctx, cfg, state)
 		case <-sampleTicker.C:
 			sampleAndExport(ctx, cfg, state, latencyGauge, readGauge, writeGauge)
+		case <-guestProbeC:
+			sampleGuestFilesystems(ctx, cfg, state, guestFsUsedGauge)
 		}
 	}
 }
@@ -185,4 +208,69 @@ func matchRate(matched, unmatched int) float64 {
 		return 0
 	}
 	return float64(matched) / float64(total) * 100
+}
+
+// sampleGuestFilesystems closes gap #4 (guest filesystem used %) via Tier
+// 1.5: for each VM in the disk map matching cfg.GuestProbe.VMInclude,
+// shells into the guest over VMBus (guestprobe.SampleFilesystem,
+// PowerShell Direct — no guest network path, no in-guest agent) and
+// exports vm.guest.filesystem.used_percent per fixed volume. Reuses the
+// disk map's VM enumeration (internal/hyperv.BuildDiskMap) rather than a
+// separate Get-VM call. One VM's probe failing (e.g. missing guest
+// Integration Services) does not block the others — logged and skipped,
+// same fallback philosophy as buildDiskMap/sampleAndExport above.
+func sampleGuestFilesystems(ctx context.Context, cfg *config.HostCompanionConfig, state *diskMapState, gauge metric.Float64Gauge) {
+	m := state.get()
+	if m == nil {
+		log.Printf("guest probe sample skipped: disk map not yet built")
+		return
+	}
+
+	cred, err := creds.NewReader().Read(cfg.GuestProbe.CredentialName)
+	if err != nil {
+		log.Printf("guest probe: reading credential %q: %v", cfg.GuestProbe.CredentialName, err)
+		return
+	}
+
+	for vmID, entry := range m.ByID {
+		if !matchesInclude(entry.VMName, cfg.GuestProbe.VMInclude) {
+			continue
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, cfg.GuestProbe.SampleTimeout)
+		samples, err := guestprobe.SampleFilesystem(probeCtx, vmID, cred)
+		cancel()
+		if err != nil {
+			log.Printf("guest probe: vm=%s: %v", entry.VMName, err)
+			continue
+		}
+		for _, s := range samples {
+			pct, ok := s.UsedPercent()
+			if !ok {
+				continue
+			}
+			gauge.Record(ctx, pct,
+				metric.WithAttributes(
+					attribute.String("vm.name", entry.VMName),
+					attribute.String("drive_letter", s.DriveLetter),
+				))
+		}
+	}
+}
+
+// matchesInclude reports whether name matches at least one filepath.Match
+// glob pattern in include (e.g. "WebServer*"). A malformed pattern is
+// logged and skipped rather than aborting the whole match, since a config
+// typo shouldn't silently disable every VM's probe.
+func matchesInclude(name string, include []string) bool {
+	for _, pattern := range include {
+		ok, err := filepath.Match(pattern, name)
+		if err != nil {
+			log.Printf("guest probe: invalid vm_include pattern %q: %v", pattern, err)
+			continue
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }

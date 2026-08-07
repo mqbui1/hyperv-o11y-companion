@@ -43,10 +43,11 @@ collection mechanism with a distinct blast radius — see
                                 ▲                                   │
               ┌─────────────────┴──────────────────┐                │
               │ Tier 1.5 — PowerShell Direct        │                │
-              │ guest probe (POC, not yet green —   │                │
-              │ now the ONLY viable in-guest path    │                │
-              │ for this customer, since Tier 2       │                │
-              │ below is ruled out)                   │                │
+              │ guest probe (implemented,           │                │
+              │ disabled by default pending          │                │
+              │ go/no-go — now the ONLY viable       │                │
+              │ in-guest path for this customer,     │                │
+              │ since Tier 2 below is ruled out)      │                │
               │ in-guest metrics with no guest       │                │
               │ network egress or agent required     │                │
               └──────────────────────────────────────┘                │
@@ -70,7 +71,7 @@ collection mechanism with a distinct blast radius — see
 | 0 | `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) — Windows Service polling SCVMM | Central SCVMM console box (`CULSPLUNKO11Y01`) | #1 (power-state, SOLVED), #8 (guest_os, SOLVED) |
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
-| 1.5 | PowerShell Direct guest probe | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (POC, not yet green — blocked on go/no-go decision) |
+| 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`); does not yet cover #2 |
 | 1.6 | Windows Event Forwarding | Centralized collector receiving forwarded events | Guest/host event visibility without per-VM collector deployment |
 | 2 | Splunk OTel Collector, `guest-vm-config.yaml` | **Ruled out for this customer** — not opt-in, not fleet-wide, not deployed at all | Kept for reference only; does not close #2/#4 for this engagement |
 

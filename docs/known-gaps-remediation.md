@@ -29,13 +29,17 @@ exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
 this counter, so `vm_memory_pressure_high` in `detectors.tf` silently never
 fires for them — not a bug, a coverage gap.
 
-**Status: open, not addressed.** Tier 2's `hostmetrics/memory` scraper would
-close this for opted-in static-memory VMs, but this customer has ruled out
-deploying any collector inside guest VMs, opt-in or otherwise — Tier 2 is
-not part of the proposed solution (see gap #4 and `guest-vm-config.yaml`'s
-header comment). The only remaining candidate is Tier 1.5 (PowerShell Direct
-guest probe, design-only), blocked on its own go/no-go decision — see
-`docs/architecture.md`.
+**Status: open.** Tier 2's `hostmetrics/memory` scraper would close this for
+opted-in static-memory VMs, but this customer has ruled out deploying any
+collector inside guest VMs, opt-in or otherwise — Tier 2 is not part of the
+proposed solution (see gap #4 and `guest-vm-config.yaml`'s header comment).
+Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`) is now
+implemented in code, but scoped narrowly to gap #4 (guest filesystem used
+%) for now — see `docs/phase3-guest-probe-plan.md`'s "Non-goals" section.
+Extending `guestprobe.SampleFilesystem`'s `Invoke-Command -VMId` pattern to
+also query in-guest memory (e.g. `Get-Counter '\Memory\Available Bytes'`
+inside the guest) would be a small, structurally similar follow-on once
+Tier 1.5's go/no-go criteria are validated — not yet built.
 
 ## 3. ~19–23% of VHD instances unattributed (fleet match rate 77–81%) — SOLVED
 `Get-VMHardDiskDrive` (used by the customer's `build-hyperv-vm-disk-map.ps1`)
@@ -58,20 +62,25 @@ defect. This logic is being ported into `hyperv-host-companion`
 map shared between a builder and sampler goroutine, replacing the two
 scripts' JSON-file handoff.
 
-## 4. No guest filesystem used % visible — OPEN
+## 4. No guest filesystem used % visible — OPEN (code implemented, disabled pending go/no-go)
 Confirmed architectural limitation: `host.disk.free_space` / Hyper-V's
 `Hyper-V Virtual Storage Device` counters describe host-visible virtual disk
 *files*, not what's actually used inside the guest's filesystem.
 
-**Status: open, not addressed.** Tier 2 (`guest-vm-config.yaml`,
-`hostmetrics/filesystem` or `windowsperfcounters/guest_disk`) would close
-this, but this customer has explicitly ruled out deploying any collector
-inside guest VMs — not just fleet-wide, opt-in included. Tier 2 is kept in
-this repo for reference only (other customers without this constraint) and
-is **not** part of the solution proposed to this customer. The only
-remaining candidate is Tier 1.5 (PowerShell Direct guest probe,
-design-only), blocked on a separate go/no-go decision — see
-`docs/architecture.md`.
+**Status: implemented in `hyperv-host-companion`, disabled by default.**
+Tier 2 (`guest-vm-config.yaml`) would also close this, but this customer
+has explicitly ruled out deploying any collector inside guest VMs — not
+just fleet-wide, opt-in included — so Tier 2 is kept for reference only and
+is **not** part of the solution proposed to this customer. Tier 1.5
+(PowerShell Direct guest probe, `internal/guestprobe`) is now real code: a
+third ticker in `cmd/host-companion/main.go` calls `Invoke-Command -VMId`
+over VMBus for an opt-in `guest_probe.vm_include` subset and exports
+`vm.guest.filesystem.used_percent`. It ships with `guest_probe.enabled:
+false` and should stay off until the go/no-go criteria in
+`docs/phase3-guest-probe-plan.md` are validated against the real fleet
+(session latency/load at scale, guest Integration Services coverage, and
+whether a single shared guest-local credential is acceptable). Marking this
+gap "OPEN" rather than "SOLVED" until that validation happens.
 
 **Historical billing context (why Tier 2 was originally scoped opt-in
 rather than fleet-wide — now moot, since it's ruled out entirely):** one

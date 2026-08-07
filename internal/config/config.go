@@ -76,12 +76,32 @@ type DiskMetricsConfig struct {
 	LatencyScale   float64       `yaml:"latency_scale"`
 }
 
+// GuestProbeConfig configures Tier 1.5 (PowerShell Direct guest probe, see
+// docs/phase3-guest-probe-plan.md). Disabled by default — enabling this in
+// production is gated on the go/no-go criteria in that doc, not just a
+// config flag flip.
+type GuestProbeConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// VMInclude is an opt-in curated subset by VM name (filepath.Match
+	// glob patterns, e.g. "WebServer*"; matched in
+	// cmd/host-companion/main.go). Empty means no VMs are probed even if
+	// Enabled is true — there is no fleet-wide
+	// default, mirroring how Tier 2 was scoped before being ruled out
+	// entirely; Tier 1.5 starts opt-in until go/no-go criterion #1
+	// (fleet-scale Invoke-Command -VMId latency) is validated.
+	VMInclude      []string      `yaml:"vm_include"`
+	SampleInterval time.Duration `yaml:"sample_interval"`
+	SampleTimeout  time.Duration `yaml:"sample_timeout"`
+	CredentialName string        `yaml:"credential_name"`
+}
+
 // HostCompanionConfig is cmd/host-companion's config schema
 // (config/host-companion.yaml).
 type HostCompanionConfig struct {
-	OTLP         OTLPConfig        `yaml:"otlp"`
-	DiskMap      DiskMapConfig     `yaml:"disk_map"`
-	DiskMetrics  DiskMetricsConfig `yaml:"disk_metrics"`
+	OTLP        OTLPConfig        `yaml:"otlp"`
+	DiskMap     DiskMapConfig     `yaml:"disk_map"`
+	DiskMetrics DiskMetricsConfig `yaml:"disk_metrics"`
+	GuestProbe  GuestProbeConfig  `yaml:"guest_probe"`
 }
 
 func LoadHostCompanion(path string) (*HostCompanionConfig, error) {
@@ -100,6 +120,15 @@ func LoadHostCompanion(path string) (*HostCompanionConfig, error) {
 	}
 	if c.DiskMetrics.LatencyScale == 0 {
 		c.DiskMetrics.LatencyScale = 1000.0
+	}
+	if c.GuestProbe.SampleInterval == 0 {
+		c.GuestProbe.SampleInterval = 5 * time.Minute
+	}
+	if c.GuestProbe.SampleTimeout == 0 {
+		c.GuestProbe.SampleTimeout = 30 * time.Second
+	}
+	if c.GuestProbe.CredentialName == "" {
+		c.GuestProbe.CredentialName = "hyperv-o11y/guest-probe"
 	}
 	return &c, nil
 }
