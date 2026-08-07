@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v4 source for the hyperv-o11y-companion MSI. Two independently
+  selectable features so the same MSI can be run on either box:
+
+    - ScvmmPollerFeature: install on the central SCVMM console box only
+      (CULSPLUNKO11Y01).
+    - HostCompanionFeature: install on every physical Hyper-V host.
+
+  Build with `wix build` (WiX v4 toolset) — see build.ps1. Regenerate all
+  GUIDs below (Package/@UpgradeCode and every Component/@Guid) before first
+  real use; the placeholders here are NOT safe to ship as-is.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Splunk Hyper-V O11y Companion"
+            Manufacturer="Splunk"
+            Version="1.0.0.0"
+            UpgradeCode="8f3b9b1a-6b3c-4b7a-9c9a-4a1e6b8b0e01">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Hyper-V O11y Companion is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="SplunkFolder" Name="Splunk">
+        <Directory Id="INSTALLFOLDER" Name="HyperVO11yCompanion">
+          <Directory Id="BINFOLDER" Name="bin" />
+          <Directory Id="CONFIGFOLDER" Name="config" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="ScvmmPollerFeature" Title="SCVMM Poller Service" Description="Install on the central SCVMM console box only." Level="1">
+      <ComponentRef Id="ScvmmPollerBinary" />
+      <ComponentRef Id="ScvmmPollerConfig" />
+      <ComponentRef Id="ScvmmPollerService" />
+    </Feature>
+
+    <Feature Id="HostCompanionFeature" Title="Host Companion Service" Description="Install on every physical Hyper-V host." Level="1">
+      <ComponentRef Id="HostCompanionBinary" />
+      <ComponentRef Id="HostCompanionConfig" />
+      <ComponentRef Id="HostCompanionService" />
+    </Feature>
+
+    <!-- scvmm-poller -->
+    <Component Id="ScvmmPollerBinary" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a01">
+      <File Id="ScvmmPollerExe" Source="staging\bin\scvmm-poller.exe" KeyPath="yes" />
+    </Component>
+
+    <Component Id="ScvmmPollerConfig" Directory="CONFIGFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a02">
+      <!-- NeverOverwrite: re-running the installer must not clobber an
+           operator's already-tuned scvmm-poller.yaml. -->
+      <File Id="ScvmmPollerConfigFile" Source="staging\config\scvmm-poller.yaml" KeyPath="yes" NeverOverwrite="yes" />
+    </Component>
+
+    <Component Id="ScvmmPollerService" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a03">
+      <File Id="ScvmmPollerServiceFileRef" Source="staging\bin\scvmm-poller.exe" KeyPath="yes" />
+      <ServiceInstall Id="ScvmmPollerServiceInstall"
+                       Name="hyperv-scvmm-poller"
+                       DisplayName="Splunk Hyper-V SCVMM Poller"
+                       Description="Polls SCVMM for VM/host power-state and guest OS metadata (replaces collect-scvmm-metrics.ps1 / enrich-vm-guest-os.ps1)."
+                       Start="auto"
+                       Type="ownProcess"
+                       ErrorControl="normal"
+                       Arguments="-config &quot;[CONFIGFOLDER]scvmm-poller.yaml&quot;" />
+      <ServiceControl Id="ScvmmPollerServiceControl"
+                       Name="hyperv-scvmm-poller"
+                       Start="install"
+                       Stop="both"
+                       Remove="uninstall"
+                       Wait="yes" />
+    </Component>
+
+    <!-- host-companion -->
+    <Component Id="HostCompanionBinary" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a04">
+      <File Id="HostCompanionExe" Source="staging\bin\host-companion.exe" KeyPath="yes" />
+    </Component>
+
+    <Component Id="HostCompanionConfig" Directory="CONFIGFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a05">
+      <File Id="HostCompanionConfigFile" Source="staging\config\host-companion.yaml" KeyPath="yes" NeverOverwrite="yes" />
+    </Component>
+
+    <Component Id="HostCompanionService" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a06">
+      <File Id="HostCompanionServiceFileRef" Source="staging\bin\host-companion.exe" KeyPath="yes" />
+      <ServiceInstall Id="HostCompanionServiceInstall"
+                       Name="hyperv-host-companion"
+                       DisplayName="Splunk Hyper-V Host Companion"
+                       Description="Samples per-VM disk metrics and resolves them to VM names (replaces build-hyperv-vm-disk-map.ps1 / collect-hyperv-vm-disk.ps1)."
+                       Start="auto"
+                       Type="ownProcess"
+                       ErrorControl="normal"
+                       Arguments="-config &quot;[CONFIGFOLDER]host-companion.yaml&quot;" />
+      <ServiceControl Id="HostCompanionServiceControl"
+                       Name="hyperv-host-companion"
+                       Start="install"
+                       Stop="both"
+                       Remove="uninstall"
+                       Wait="yes" />
+    </Component>
+
+  </Package>
+</Wix>

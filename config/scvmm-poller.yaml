@@ -1,0 +1,35 @@
+# Example config for the scvmm-poller service.
+# Install path: C:\Program Files\Splunk\HyperVO11yCompanion\config\scvmm-poller.yaml
+
+scvmm:
+  server: "vmm01.tstrccl.com"
+  cluster: "TSTSHHYPRVCLUS"          # scope both metrics + guest_os to this cluster; empty = whole estate (not recommended)
+  credential_name: "hyperv-o11y/scvmm"  # Windows Credential Manager generic credential name
+
+splunk:
+  realm: "us1"
+  credential_name: "hyperv-o11y/splunk-token"  # Windows Credential Manager generic credential (access token as password)
+
+otlp:
+  endpoint: "http://winsolarwinds2.na.rccl.com:4319"  # same dedicated scvmm receiver port used today
+  insecure: true
+
+metrics:
+  interval: 60s
+  include_vm_storage_network: true
+  include_vm_vhd: true
+  include_vm_perf: false   # off by default — Tier 1 already reports per-VM CPU/mem at 60s vs SCVMM's ~9min
+
+guest_os:
+  interval: 1h
+  secure_boot_fallback: false   # needs cross-domain remote rights to hosts; enable once validated
+  name_heuristic: true
+  linux_name_markers: [dkp, nkp, ocp, k8s, kube, kub, rhel, rhl, centos, ubuntu, debian, suse, rocky, alma, fedora, linux, minio, harbor, zscaler]
+
+host_include:   # empty = all SCVMM hosts in scope; explicit allowlist mirrors today's -HostInclude
+  - "TSTSHHYPER01*"
+  - "TSTSHHYPER02*"
+  - "TSTSHHYPER03*"
+  - "TSTSHHYPER04*"
+  - "TSTSHHYPER05*"
+  - "TSTSHHYPER06*"

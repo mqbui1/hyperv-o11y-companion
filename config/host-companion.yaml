@@ -1,0 +1,16 @@
+# Example config for the host-companion service.
+# Install path: C:\Program Files\Splunk\HyperVO11yCompanion\config\host-companion.yaml
+# Deployed one instance per physical Hyper-V host, alongside the Splunk OTel
+# Collector already running there (hypervisor-host-config.yaml).
+
+otlp:
+  endpoint: "http://localhost:4318"  # host-local Splunk OTel Collector; no credential needed here
+  insecure: true
+
+disk_map:
+  build_interval: 1h
+  build_timeout: 300s   # matches build-hyperv-vm-disk-map.ps1's -TimeoutSec 300; on timeout, keep the previous in-memory map
+
+disk_metrics:
+  sample_interval: 60s
+  latency_scale: 1000.0  # seconds -> ms; empirically confirmed via 1,890-series real-fleet sample, see docs/known-gaps-remediation.md gap #5
