@@ -20,7 +20,9 @@ that used to live in separate repos/scripts into one place:
 
 See `docs/architecture.md` for the full five-tier model and
 `docs/known-gaps-remediation.md` for how each of the 10 real customer-POC
-gaps is addressed (10 solved — 2 of those pending fleet-wide validation — see "Known gaps" below).
+gaps is addressed (10 solved — 2 of those pending fleet-wide validation, 2
+implemented but not yet live-tested end-to-end, 1 unconfirmed against the
+original POC's own cluster — see "Known gaps" below).
 
 **Important customer constraint:** this customer has explicitly ruled out
 deploying any collector inside guest VMs, opt-in or otherwise. Tier 2
@@ -81,14 +83,14 @@ docs/
 
 | # | Gap | Status |
 |---|---|---|
-| 1 | No power-state/availability monitoring | Solved — `hyperv-scvmm-poller` |
+| 1 | No power-state/availability monitoring | Solved (implemented, not yet live-tested end-to-end) — `hyperv-scvmm-poller` |
 | 2 | Static-memory VMs invisible to memory pressure | Solved (pending fleet-wide validation) — Tier 1.5, mechanism-validated on a real nested-Hyper-V test; ships `disabled` until fleet go/no-go |
 | 3 | ~20% of VHD instances unattributed | Solved (accepted residual) — `hyperv-host-companion` |
 | 4 | No guest filesystem used % visible | Solved (pending fleet-wide validation) — Tier 1.5, mechanism-validated on a real nested-Hyper-V test; ships `disabled` until fleet go/no-go |
 | 5 | Disk latency unit unconfirmed | Solved — empirically verified, ×1000 scale correction |
 | 6 | Malformed `vm.name` from Perfmon `#N` suffixing | Solved — `otel-collector/hypervisor-host-config.yaml` |
-| 7 | ~20% of VMs missing network series | Solved — wrong counter name fixed |
-| 8 | `guest_os` accuracy issues | Solved — `hyperv-scvmm-poller` |
+| 7 | ~20% of VMs missing network series | Solved for a from-scratch deployment — wrong counter name fixed; unconfirmed whether this fully resolves the original POC's own cluster (see gap #7's "Still open" note) |
+| 8 | `guest_os` accuracy issues | Solved (implemented, not yet live-tested end-to-end) — `hyperv-scvmm-poller` |
 | 9 | VMMS load from failed live migrations | Solved — event-to-metric `count` connector |
 | 10 | poc -> production cutover | Solved by design — environment-agnostic filters |
 

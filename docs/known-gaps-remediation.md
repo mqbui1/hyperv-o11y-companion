@@ -5,23 +5,24 @@ Source: a real customer POC test summary (`HV-CLUSTER-01` cluster, hosts
 finding to a concrete fix in this repo, or to an explicit non-goal with a
 recommended workaround.
 
-## 1. Availability / power-state monitoring — SOLVED
+## 1. Availability / power-state monitoring — SOLVED (implemented, not yet live-tested end-to-end)
 No VM/host "down" detection exists in Tier 1 (`hypervisor-host-config.yaml`) —
 Perfmon counters only report state for VMs that are running; a powered-off VM
 simply stops emitting data, which is indistinguishable from "collector
 briefly missed a scrape."
 
 **Fix (implemented):** this is Tier 0 (SCVMM), not Perfmon. The customer's
-`collect-scvmm-metrics.ps1` already emits `hyperv_vm_up`/`hyperv_host_up`
+`collect-scvmm-metrics.ps1` originally emitted `hyperv_vm_up`/`hyperv_host_up`
 (0/1 gauges) sourced from SCVMM's PowerState/OverallState, tagged with the
 same `vm.name`/`host.name` resource attributes this repo standardizes on, via
 the same `signalfx` exporter pattern used in `hypervisor-host-config.yaml`.
-This logic is being migrated into `hyperv-scvmm-poller`
-(`hyperv-o11y-companion` repo, Phase 1) as part of the operational
-consolidation — see `docs/collectorless-redesign-and-gap-review-summary.md`
-and the new five-tier architecture summary for detail. This repo still does
-not reimplement SCVMM polling itself; it just documents the integration
-point.
+This logic has been ported into `hyperv-scvmm-poller`'s `pollMetrics` loop
+(`hyperv-o11y-companion` repo, `cmd/scvmm-poller/main.go`) — code-complete,
+but (unlike `hyperv-host-companion`, which was live-tested against a real
+Hyper-V host this round) not yet run end-to-end against a real SCVMM server;
+that live-test pass is the next priority for this service. This repo still
+does not reimplement SCVMM's own PowerShell cmdlets; `internal/scvmm` still
+shells out to `Get-SCVMHost`/`Get-SCVirtualMachine` under the hood.
 
 ## 2. Static-memory VMs invisible to memory-pressure alerting — SOLVED (pending fleet-wide validation)
 By design: "Current Pressure" (`Hyper-V Dynamic Memory VM` object) only
@@ -144,7 +145,7 @@ customer's Hyper-V estate, not something an OTel processor can fix — flagged
 as an out-of-band recommendation (rename duplicate VMs) rather than a config
 workaround.
 
-## 7. ~20% of VMs emit no network series
+## 7. ~20% of VMs emit no network series — SOLVED for a from-scratch deployment (unconfirmed whether it fully resolves the original POC's cluster)
 Originally documented as an unconfirmed root cause (candidates: VMs with no
 vNIC attached, VMs powered off during the collection window, or a naming edge
 case in the `Hyper-V Virtual Network Adapter` instance string not covered by
@@ -182,7 +183,7 @@ build a "no network data" detector on `vm.net.bytes_total` until any
 residual gap is spot-checked — a naive "series stopped/never existed"
 detector would false-positive on every VM that legitimately has no vNIC.
 
-## 8. guest_os accuracy issues (a meaningful number of unknown/untagged VMs; heuristic Linux tagging; secure-boot fallback needs remote rights) — SOLVED
+## 8. guest_os accuracy issues (a meaningful number of unknown/untagged VMs; heuristic Linux tagging; secure-boot fallback needs remote rights) — SOLVED (implemented, not yet live-tested end-to-end)
 This is entirely inside the customer's `enrich-vm-guest-os.ps1` script, not
 in this repo's OTel/Terraform layer — this accelerator doesn't ingest or
 re-derive `guest_os` itself.
@@ -195,10 +196,11 @@ naming heuristic as a last resort — writing the result as a `guest_os`
 dimension property via the SignalFx metadata API (GET→merge→PUT), keyed by
 `vm.name`/the `vm` dimension so it joins onto every metric already carrying
 that value, at zero additional MTS cost. Ambiguous duplicate VM names are
-skipped, not clobbered (consistent with gap #6). This logic is being ported
-into `hyperv-scvmm-poller`'s `guest_os` loop (`hyperv-o11y-companion` repo,
-Phase 1, in progress) — see `internal/guestos` and `internal/metadata` in
-that repo.
+skipped, not clobbered (consistent with gap #6). This logic has been ported
+into `hyperv-scvmm-poller`'s `pollGuestOS` loop (`hyperv-o11y-companion` repo,
+`cmd/scvmm-poller/main.go`, using `internal/guestos` + `internal/metadata`) —
+code-complete, but not yet run end-to-end against a real SCVMM server (same
+caveat as gap #1 above).
 
 ## 9. VMMS load issues driven by failed live migrations (Event ID 21026)
 Confirmed root cause on `HV-HOST-01`; `HV-HOST-03` needed a
