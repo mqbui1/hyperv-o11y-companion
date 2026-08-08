@@ -105,6 +105,27 @@ probe the VM. Shortening `disk_map.build_interval` narrows this window at
 the cost of more frequent `Get-VM` shell-outs; not yet tuned against a real
 migration-frequency profile.
 
+## Mechanism validated against a real nested Hyper-V guest (2026-08-07)
+
+`internal/creds.NewReader().Read()` + `internal/guestprobe.Sample()` were
+run for real (not synthetic) against a genuine Windows Server 2022 Server
+Core guest on a nested-virtualization Azure host — Integration Services
+reporting `OK`/`Heartbeat`, guest created via unattended DISM apply +
+`bcdboot` (no Convert-WindowsImage/PSGallery dependency needed). Confirmed:
+Credential Manager round-trip resolved the stored `.\Administrator`
+credential; `Invoke-Command -VMId` succeeded over VMBus with **no guest
+network path at all** (the nested switch is Internal-only); JSON decoding
+and `UsedPercent()` math were correct on real numbers (16.30% filesystem
+used, 39.36% memory used on a VM with **Dynamic Memory explicitly
+disabled** — i.e. exactly gap #2's static-memory case that Hyper-V's own
+Current Pressure counter can't see).
+
+This validates the mechanism works correctly end-to-end on one VM. It does
+**not** satisfy the go/no-go criteria below, which are about fleet-scale
+behavior (hundreds of concurrent sessions, real-fleet IC coverage, credential
+model acceptability) — `guest_probe.enabled` should stay `false` until those
+are separately validated.
+
 ## Go/no-go criteria (owned by the POC, not this repo)
 
 Before Phase 3 implementation starts, the PowerShell Direct POC needs to
