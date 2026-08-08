@@ -79,6 +79,48 @@ docs/
   nested-hyperv-azure-test-plan.md  Real-hardware validation plan (Azure)
 ```
 
+## Tier 1 — host-side OTel Collector
+
+The foundation tier, and where this solution started (as the standalone
+`hyperv-o11y-accelerator` repo) before the five-tier model grew around it —
+see `docs/architecture.md`. A generic OpenTelemetry
+`windowsperfcounters`/`windowseventlogreceiver` pipeline
+(`otel-collector/hypervisor-host-config.yaml`), deployed identically on
+every Hyper-V host via the Splunk Distribution of the OpenTelemetry
+Collector for Windows — no custom binary, no credentials beyond the ingest
+token (`SPLUNK_ACCESS_TOKEN`/`SPLUNK_REALM`). Covers hypervisor-visible
+resource-allocation metrics (vCPU %, assigned memory, virtual disk file
+I/O, vNIC throughput) plus the malformed-`vm.name` fix (gap #6), the
+disk-latency scale correction (gap #5), the corrected network counter
+names (gap #7), and the VMMS migration-failure event-to-metric conversion
+(gap #9). Cheap — no extra billable hosts — but structurally cannot see
+anything happening inside a guest's own OS; that's what Tiers 1
+companion/1.5/2 are for. This is what fills the "Hyper-V: Hypervisor
+Overview" dashboard (`terraform/dashboards.tf`). See
+`docs/capabilities-and-metrics.md` for the full metrics catalog and
+`docs/deployment-guide.md` for the install steps (Splunk OTel Collector for
+Windows MSI, config swap, env vars, service restart).
+
+## Quick start
+
+1. **Provision dashboards + detectors** (one-time, org-wide, needs an
+   admin-scoped org token — not the ingest token used below):
+   ```
+   cd terraform
+   cp terraform.tfvars.example terraform.tfvars   # fill in splunk_access_token + splunk_realm
+   terraform init && terraform apply
+   ```
+2. **Install the Splunk OTel Collector for Windows on every Hyper-V host**
+   (Tier 1) — install the MSI, replace its config with
+   `otel-collector/hypervisor-host-config.yaml`, set
+   `SPLUNK_ACCESS_TOKEN`/`SPLUNK_REALM`, restart the service.
+3. **Install the two Windows Services** (`scvmm-poller` on the SCVMM
+   console box, `host-companion` on every Hyper-V host) via the MSI in
+   `installer/` — see "Services" below.
+
+Full step-by-step instructions, credential setup, and a test/verify
+checklist: `docs/deployment-guide.md`.
+
 ## Known gaps (10 from a real customer POC)
 
 | # | Gap | Status |
