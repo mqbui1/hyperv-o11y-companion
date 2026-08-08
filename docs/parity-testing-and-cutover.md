@@ -10,7 +10,7 @@ close different gaps.
 
 ### Phase A — Shadow mode (no cutover yet)
 
-1. Install `hyperv-scvmm-poller` on `CULSPLUNKO11Y01` alongside the existing
+1. Install `hyperv-scvmm-poller` on the central SCVMM console box alongside the existing
    Task Scheduler jobs — both run concurrently. Point the new service's
    `splunk.credential_name` at a **separate** SignalFx access token (or,
    at minimum, tag its output with a distinct `deployment.environment` /

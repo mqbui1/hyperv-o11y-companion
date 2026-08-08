@@ -68,7 +68,7 @@ collection mechanism with a distinct blast radius — see
 
 | Tier | What it is | Where it runs | Gaps closed |
 |---|---|---|---|
-| 0 | `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) — Windows Service polling SCVMM | Central SCVMM console box (`CULSPLUNKO11Y01`) | #1 (power-state, SOLVED), #8 (guest_os, SOLVED) |
+| 0 | `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) — Windows Service polling SCVMM | Central SCVMM console box (e.g. `SCVMM-CONSOLE-01`) | #1 (power-state, SOLVED), #8 (guest_os, SOLVED) |
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
 | 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |

@@ -2,7 +2,7 @@
 // the DPAPI-encrypted C:\ProgramData\O11yScripts\*.pw.txt files the current
 // scheduled-task scripts use. One generic credential per secret:
 //
-//	cmdkey /generic:hyperv-o11y/scvmm       /user:tstsh.tstrccl.com\labadmsolarwinds /pass:<secret>
+//	cmdkey /generic:hyperv-o11y/scvmm       /user:example.com\svc-hyperv-o11y       /pass:<secret>
 //	cmdkey /generic:hyperv-o11y/splunk-token /user:x-sf-token                        /pass:<access-token>
 //
 // Only the account the service runs as can read the credential back — same

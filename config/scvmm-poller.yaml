@@ -2,8 +2,8 @@
 # Install path: C:\Program Files\Splunk\HyperVO11yCompanion\config\scvmm-poller.yaml
 
 scvmm:
-  server: "vmm01.tstrccl.com"
-  cluster: "TSTSHHYPRVCLUS"          # scope both metrics + guest_os to this cluster; empty = whole estate (not recommended)
+  server: "vmm01.example.com"
+  cluster: "HYPERV-CLUSTER-01"       # scope both metrics + guest_os to this cluster; empty = whole estate (not recommended)
   credential_name: "hyperv-o11y/scvmm"  # Windows Credential Manager generic credential name
 
 splunk:
@@ -11,7 +11,7 @@ splunk:
   credential_name: "hyperv-o11y/splunk-token"  # Windows Credential Manager generic credential (access token as password)
 
 otlp:
-  endpoint: "http://winsolarwinds2.na.rccl.com:4319"  # same dedicated scvmm receiver port used today
+  endpoint: "http://localhost:4319"  # a dedicated OTLP receiver port on whatever collector this box points at
   insecure: true
 
 metrics:
@@ -27,9 +27,6 @@ guest_os:
   linux_name_markers: [dkp, nkp, ocp, k8s, kube, kub, rhel, rhl, centos, ubuntu, debian, suse, rocky, alma, fedora, linux, minio, harbor, zscaler]
 
 host_include:   # empty = all SCVMM hosts in scope; explicit allowlist mirrors today's -HostInclude
-  - "TSTSHHYPER01*"
-  - "TSTSHHYPER02*"
-  - "TSTSHHYPER03*"
-  - "TSTSHHYPER04*"
-  - "TSTSHHYPER05*"
-  - "TSTSHHYPER06*"
+  - "HYPERV-HOST-01*"
+  - "HYPERV-HOST-02*"
+  - "HYPERV-HOST-03*"

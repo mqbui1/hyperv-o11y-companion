@@ -98,7 +98,7 @@ See `docs/known-gaps-remediation.md` for the full per-gap writeup.
 
 | Binary | Runs where | Replaces | Status |
 |---|---|---|---|
-| `scvmm-poller` | Central SCVMM console box (`CULSPLUNKO11Y01`) | `collect-scvmm-metrics.ps1` + `enrich-vm-guest-os.ps1` and their wrappers/scheduled tasks | **Phase 1 — scaffolded** |
+| `scvmm-poller` | Central SCVMM console box (e.g. `SCVMM-CONSOLE-01`) | `collect-scvmm-metrics.ps1` + `enrich-vm-guest-os.ps1` and their wrappers/scheduled tasks | **Phase 1 — scaffolded** |
 | `host-companion` | Every Hyper-V host, alongside the Splunk OTel Collector | `build-hyperv-vm-disk-map.ps1` + `collect-hyperv-vm-disk.ps1` (Phase 2, scaffolded here), and the PowerShell Direct guest probe (Phase 3, implemented in `internal/guestprobe`, disabled by default — see `docs/phase3-guest-probe-plan.md`) | **Phase 2 — scaffolded; Phase 3 — implemented, disabled pending go/no-go** |
 
 Both binaries are installed as native Windows Services (`golang.org/x/sys/windows/svc`)

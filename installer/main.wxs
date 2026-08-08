@@ -4,7 +4,7 @@
   selectable features so the same MSI can be run on either box:
 
     - ScvmmPollerFeature: install on the central SCVMM console box only
-      (CULSPLUNKO11Y01).
+      (e.g. SCVMM-CONSOLE-01).
     - HostCompanionFeature: install on every physical Hyper-V host.
 
   Build with `wix build` (WiX v4 toolset) — see build.ps1. Regenerate all

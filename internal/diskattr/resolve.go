@@ -9,7 +9,7 @@ package diskattr
 import (
 	"strings"
 
-	"github.com/rccl/hyperv-o11y-companion/internal/hyperv"
+	"github.com/splunk/hyperv-o11y-companion/internal/hyperv"
 )
 
 // Resolve returns the VM owning instance (a raw Perfmon instance string —

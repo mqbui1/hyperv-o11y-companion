@@ -1,4 +1,4 @@
-module github.com/rccl/hyperv-o11y-companion
+module github.com/splunk/hyperv-o11y-companion
 
 go 1.22
 

@@ -24,9 +24,9 @@ type Exporter struct {
 }
 
 // New builds an OTLP/HTTP metric pipeline pointed at endpoint — for
-// hyperv-scvmm-poller, the dedicated otlp/scvmm receiver on
-// winsolarwinds2:4319; for hyperv-host-companion, the host-local Splunk OTel
-// Collector (typically http://localhost:4318). serviceName identifies the
+// hyperv-scvmm-poller, a dedicated otlp/scvmm receiver (see
+// config/scvmm-poller.yaml's otlp.endpoint); for hyperv-host-companion, the
+// host-local Splunk OTel Collector (typically http://localhost:4318). serviceName identifies the
 // emitting service in the exported resource. insecure disables TLS for
 // plain-HTTP collector endpoints.
 func New(ctx context.Context, serviceName, endpoint string, insecure bool) (*Exporter, error) {

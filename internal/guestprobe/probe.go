@@ -18,7 +18,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/rccl/hyperv-o11y-companion/internal/creds"
+	"github.com/splunk/hyperv-o11y-companion/internal/creds"
 )
 
 // FilesystemSample is one fixed volume's capacity, as seen from inside the
