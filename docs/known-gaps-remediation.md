@@ -99,9 +99,10 @@ nowhere to land). `terraform/dashboards.tf`'s VM Detail dashboard and a new
 
 **Historical billing context (why Tier 2 was originally scoped opt-in
 rather than fleet-wide — now moot, since it's ruled out entirely):** one
-customer POC measured ~1,478 physical/hypervisor hosts vs. ~17,000 VMs.
-Deploying an OTel Collector inside every VM would make each VM a
-separately-billed host — roughly a 12x increase in billable host count.
+customer POC measured an order of magnitude more VMs than physical
+hypervisor hosts. Deploying an OTel Collector inside every VM would make
+each VM a separately-billed host — a large multiple increase in billable
+host count.
 
 ## 5. Disk latency unit unconfirmed — SOLVED
 `vm.storage.latency` (from the `Hyper-V Virtual Storage Device` object's
@@ -110,7 +111,7 @@ not been independently verified against a raw counter value in a live
 environment.
 
 **Fix (implemented):** confirmed via the customer's own real-fleet empirical
-analysis — a live sample of 1,890 series (2026-07-31, from
+analysis — a live multi-thousand-series sample (from
 `collect-hyperv-vm-disk.ps1`'s embedded comments) showed the counter reports
 raw **seconds**, not 100ns ticks (p95≈0.0038s/3.8ms, p99≈0.0086s/8.6ms,
 max≈0.0348s/34.8ms — textbook SAN/flash latency; a 100ns-tick reading would
@@ -122,8 +123,8 @@ applies a ×1000 (seconds→ms) correction via
 threshold expressed in ms (20ms).
 
 ## 6. Malformed vm.name values from Perfmon duplicate-instance suffixing
-3 instances observed with a trailing `#1` (the cluster has 62 duplicate-named
-VMs across its hosts, and Perfmon disambiguates same-named instances by
+A handful of instances observed with a trailing `#1` (the cluster has several
+dozen duplicate-named VMs across its hosts, and Perfmon disambiguates same-named instances by
 appending `#N`). The prior `transform/vm_name` logic didn't strip this, so
 those VMs' metrics landed under a malformed `vm.name` like `WebServer#1`
 instead of `WebServer`.
@@ -135,7 +136,7 @@ set(attributes["vm.name"], Split(attributes["vm.name"], "#")[0]) where attribute
 ```
 This runs last (after all object-specific extraction), since the `#N` suffix
 can appear regardless of which Perfmon object the instance string came from.
-Note this does not solve name *collisions* — if a customer has 62 VMs with
+Note this does not solve name *collisions* — if a customer has many VMs with
 duplicate names, this correctly strips the disambiguator but the VMs will
 still land on the same `host.name` entity in Splunk Observability Cloud
 (their metrics will merge). That's a genuine naming-hygiene problem on the
@@ -143,7 +144,7 @@ customer's Hyper-V estate, not something an OTel processor can fix — flagged
 as an out-of-band recommendation (rename duplicate VMs) rather than a config
 workaround.
 
-## 7. ~20% of VMs emit no network series (244 series vs. ~308 VMs)
+## 7. ~20% of VMs emit no network series
 Originally documented as an unconfirmed root cause (candidates: VMs with no
 vNIC attached, VMs powered off during the collection window, or a naming edge
 case in the `Hyper-V Virtual Network Adapter` instance string not covered by
@@ -181,7 +182,7 @@ build a "no network data" detector on `vm.net.bytes_total` until any
 residual gap is spot-checked — a naive "series stopped/never existed"
 detector would false-positive on every VM that legitimately has no vNIC.
 
-## 8. guest_os accuracy issues (99 unknown + 28 untagged; heuristic Linux tagging; secure-boot fallback needs remote rights) — SOLVED
+## 8. guest_os accuracy issues (a meaningful number of unknown/untagged VMs; heuristic Linux tagging; secure-boot fallback needs remote rights) — SOLVED
 This is entirely inside the customer's `enrich-vm-guest-os.ps1` script, not
 in this repo's OTel/Terraform layer — this accelerator doesn't ingest or
 re-derive `guest_os` itself.

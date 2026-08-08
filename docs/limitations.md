@@ -46,9 +46,9 @@ validation; see `docs/known-gaps-remediation.md`, gaps #2/#4.
 
 Every VM running an OTel Collector becomes a separately-billed host, which
 was the original reason this repo scoped Tier 2 as opt-in/curated rather
-than fleet-wide (in one real customer POC, ~1,478 physical/hypervisor hosts
-hosted ~17,000 VMs — fleet-wide Tier 2 would have multiplied billable host
-count roughly 12x). That billing math is now moot: **this customer has
+than fleet-wide (in one real customer POC, physical/hypervisor hosts
+hosted an order of magnitude more VMs — fleet-wide Tier 2 would have
+multiplied billable host count several-fold). That billing math is now moot: **this customer has
 separately, explicitly ruled out deploying any collector inside guest VMs
 at all**, opt-in or otherwise. Tier 2 (`guest-vm-config.yaml`) is kept in
 this repo for reference only and is not part of the proposed solution.

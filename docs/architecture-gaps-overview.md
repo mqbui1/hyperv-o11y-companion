@@ -42,8 +42,8 @@ during a real customer POC.
 for this customer:** Tier 1 is cheap (no extra billable hosts) but can only
 see hypervisor-visible resource allocation — not real guest-OS internals.
 Tier 2 would see inside the guest but makes every VM a separately-billed
-host (one customer POC measured ~1,478 physical hosts vs. ~17,000 VMs — Tier
-2 fleet-wide would multiply billable hosts ~12x). That billing math was the
+host (one customer POC measured an order of magnitude more VMs than
+physical hosts — Tier 2 fleet-wide would multiply billable hosts several-fold). That billing math was the
 original reason Tier 2 was scoped opt-in/curated rather than fleet-wide —
 but this customer has separately ruled out deploying **any** in-guest
 collector, opt-in or otherwise, so Tier 2 does not close gap #4 (or #2) for

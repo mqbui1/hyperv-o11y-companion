@@ -54,8 +54,8 @@ resource "signalfx_detector" "vm_memory_pressure_high" {
 }
 
 resource "signalfx_detector" "vm_storage_latency_high" {
-  # Unit confirmed via customer real-fleet empirical analysis (1,890-series
-  # sample, 2026-07-31) — the raw counter reports seconds, not the 100ns
+  # Unit confirmed via customer real-fleet empirical analysis (a
+  # multi-thousand-series sample) — the raw counter reports seconds, not the 100ns
   # ticks Microsoft's documentation claims.
   # otel-collector/hypervisor-host-config.yaml's transform/vm_storage_latency_scale
   # now converts vm.storage.latency to ms before export, so the threshold

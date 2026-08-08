@@ -14,8 +14,9 @@
 # Historical billing context for why this was originally scoped opt-in rather
 # than fleet-wide (now moot, since it's ruled out entirely): every VM running
 # this collector becomes a separately-billed host. One real customer POC
-# measured ~1,478 physical/hypervisor hosts vs. ~17,000 VMs — deploying Tier 2
-# everywhere would have multiplied the billable host count ~12x.
+# measured an order of magnitude more VMs than physical/hypervisor hosts —
+# deploying Tier 2 everywhere would have multiplied the billable host count
+# several-fold.
 #
 # REQUIRED for Tier 1 <-> Tier 2 correlation in Splunk Observability Cloud:
 #   1. The guest OS hostname must match the Hyper-V VM name exactly (the name

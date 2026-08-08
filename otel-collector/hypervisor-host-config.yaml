@@ -176,8 +176,8 @@ receivers:
         description: "VM virtual disk write bytes per second"
         unit: "By/s"
         gauge: {}
-      # UNIT CONFIRMED (customer real-fleet empirical analysis, 1,890-series
-      # sample, 2026-07-31): this counter reports raw SECONDS, not the 100ns
+      # UNIT CONFIRMED (customer real-fleet empirical analysis, a
+      # multi-thousand-series sample): this counter reports raw SECONDS, not the 100ns
       # ticks Microsoft's documentation claims (p95≈0.0038s/3.8ms,
       # p99≈0.0086s/8.6ms, max≈0.0348s/34.8ms — textbook SAN/flash latency;
       # a 100ns-tick reading would round to near-zero, a milliseconds reading
@@ -205,7 +205,7 @@ receivers:
           - { name: "Current Pressure", metric: vm.memory.current_pressure }
       # instance format: "VMName_Network Adapter_{VM-GUID}--{NIC-GUID}" or "Default Switch_{GUID}"
       # KNOWN GAP: in one customer POC, only ~80% of VMs emitted any series
-      # here (244 vNIC series vs. ~308 VMs). Root cause not yet confirmed —
+      # here. Root cause not yet confirmed —
       # candidates are VMs with no vNIC attached, VMs that are powered off, or
       # a naming edge case not covered by transform/vm_name. Spot-check the
       # missing ~20% before enabling a "no network data" detector on this
@@ -322,8 +322,8 @@ processors:
           - set(attributes["vm.name"], Split(attributes["vm.name"], ".vhdx")[0]) where attributes["vm.name"] != nil and IsMatch(attributes["vm.name"], ".*\\.vhdx$")
           # 5. Strip Perfmon's duplicate-instance-name suffix ("VMName#1", "VMName#2", ...).
           #    Perfmon appends "#N" to the raw instance name whenever two+ objects on the
-          #    same host share a name (confirmed in a real POC: 62 duplicate-named VMs on
-          #    one cluster produced malformed vm.name values). This must run LAST, after
+          #    same host share a name (confirmed in a real POC: several dozen duplicate-named
+          #    VMs on one cluster produced malformed vm.name values). This must run LAST, after
           #    the object-specific extraction above, since the suffix can appear on any
           #    object type's instance string. See docs/known-gaps-remediation.md, gap #6.
           #    VALIDATED against a real Hyper-V host (nested virtualization, Azure): this

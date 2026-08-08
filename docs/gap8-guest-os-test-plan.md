@@ -30,8 +30,8 @@ throwaway SCVMM test deployment), not something provisioned here.
   2. A Linux VM (SCVMM `OperatingSystem` contains one of: linux, ubuntu,
      red hat, rhel, centos, suse, debian, oracle, rocky, alma, fedora).
   3. A VM SCVMM reports as `Unknown` or blank `OperatingSystem` — this is
-     the case gap #8 was originally about (99 unknown + 28 untagged in the
-     real POC).
+     the case gap #8 was originally about (a meaningful number of
+     unknown/untagged VMs in the real POC).
 
 ## 2. Set up credentials
 
