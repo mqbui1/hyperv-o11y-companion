@@ -23,7 +23,7 @@ and the new five-tier architecture summary for detail. This repo still does
 not reimplement SCVMM polling itself; it just documents the integration
 point.
 
-## 2. Static-memory VMs invisible to memory-pressure alerting — OPEN
+## 2. Static-memory VMs invisible to memory-pressure alerting — SOLVED (pending fleet-wide validation)
 By design: "Current Pressure" (`Hyper-V Dynamic Memory VM` object) only
 exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
 this counter, so `vm_memory_pressure_high` in `detectors.tf` silently never
@@ -39,10 +39,12 @@ inside the guest (`TotalVisibleMemorySize`/`FreePhysicalMemory`, both in
 KB) in the same `Invoke-Command` session used for gap #4, and exports
 `vm.guest.memory.used_percent`. This is the guest's own OS-reported memory
 usage, not Hyper-V's Dynamic-Memory-only "Current Pressure" counter, so it
-works for static-memory VMs — the whole point of this gap. Same caveat as
-gap #4: ships with `guest_probe.enabled: false`, and should stay off until
-the go/no-go criteria in `docs/phase3-guest-probe-plan.md` are validated.
-Marking this gap "OPEN" rather than "SOLVED" until that validation happens.
+works for static-memory VMs — the whole point of this gap. Mechanism
+validated end-to-end against a real nested-Hyper-V guest (see
+`docs/phase3-guest-probe-plan.md`). Same caveat as gap #4: ships with
+`guest_probe.enabled: false`, and should stay off until fleet-wide go/no-go
+validation (session latency/load at scale, real-fleet Integration Services
+coverage, shared-credential security review) is complete.
 
 ## 3. ~19–23% of VHD instances unattributed (fleet match rate 77–81%) — SOLVED
 `Get-VMHardDiskDrive` (used by the customer's `build-hyperv-vm-disk-map.ps1`)
@@ -65,7 +67,7 @@ defect. This logic is being ported into `hyperv-host-companion`
 map shared between a builder and sampler goroutine, replacing the two
 scripts' JSON-file handoff.
 
-## 4. No guest filesystem used % visible — OPEN (code implemented, disabled pending go/no-go)
+## 4. No guest filesystem used % visible — SOLVED (pending fleet-wide validation)
 Confirmed architectural limitation: `host.disk.free_space` / Hyper-V's
 `Hyper-V Virtual Storage Device` counters describe host-visible virtual disk
 *files*, not what's actually used inside the guest's filesystem.
@@ -82,8 +84,10 @@ over VMBus for an opt-in `guest_probe.vm_include` subset and exports
 false` and should stay off until the go/no-go criteria in
 `docs/phase3-guest-probe-plan.md` are validated against the real fleet
 (session latency/load at scale, guest Integration Services coverage, and
-whether a single shared guest-local credential is acceptable). Marking this
-gap "OPEN" rather than "SOLVED" until that validation happens.
+whether a single shared guest-local credential is acceptable). Mechanism
+validated end-to-end against a real nested-Hyper-V guest (16.30% filesystem
+used, matched hand-computed expected value) — see
+`docs/phase3-guest-probe-plan.md`.
 
 `otel-collector/hypervisor-host-config.yaml` now has an `otlp` receiver and
 a `metrics/vm_companion` pipeline to receive and correctly tag

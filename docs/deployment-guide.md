@@ -62,8 +62,9 @@ Overview" dashboard.
 This customer has explicitly ruled out deploying any collector inside guest
 VMs, opt-in or otherwise. `otel-collector/guest-vm-config.yaml` is kept in
 this repo for reference only (e.g. other engagements without this
-constraint). For this customer, gaps #2 and #4 remain **open**, pending the
-Tier 1.5 (PowerShell Direct guest probe) go/no-go decision — see
+constraint). For this customer, gaps #2 and #4 are solved via Tier 1.5
+(PowerShell Direct guest probe, mechanism-validated), but remain disabled
+in production pending fleet-wide go/no-go validation — see
 `docs/known-gaps-remediation.md` and `docs/phase3-guest-probe-plan.md`.
 
 ### 4. Tier 1.5 pilot enablement (optional — requires customer go/no-go first)
