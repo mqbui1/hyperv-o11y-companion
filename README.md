@@ -36,6 +36,55 @@ validation (session load at scale, real-fleet Integration Services
 coverage, shared-credential security review — see
 `docs/phase3-guest-probe-plan.md`).
 
+## Capabilities (generic — applies to any Hyper-V environment)
+
+Everything below is independent of any single customer's constraints — it's
+the full set of things this solution can do, organized by tier. Which tiers
+you deploy depends on your own guest-VM policy (see "Choosing your tiers"
+at the end of this section); nothing here requires a specific customer's
+setup to be true.
+
+| Capability | Tier | What you get | Requires |
+|---|---|---|---|
+| VM/host power-state (up/down) | 0 | `hyperv_vm_up`/`hyperv_host_up` gauges — the only way to detect a powered-off VM; Perfmon simply stops emitting, indistinguishable from a missed scrape | SCVMM management server, read-only SCVMM account |
+| Guest OS classification | 0 | `guest_os` dimension property (SCVMM's OperatingSystem field → Secure Boot template fallback → optional naming heuristic), zero extra MTS cost, applies retroactively to every metric already carrying that VM | SCVMM |
+| Host CPU/memory/disk/network | 1 | `host.*` metrics — physical host resource utilization | Splunk OTel Collector on every Hyper-V host |
+| Hypervisor-level aggregate metrics | 1 | `hyperv.*` metrics (hypervisor CPU, VMMS health) | same as above |
+| Per-VM CPU/memory/disk/network (host-visible) | 1 | `vm.*` metrics — vCPU %, assigned/pressure memory, virtual disk file I/O, vNIC throughput, all attributed per VM via Perfmon instance-string parsing | same as above |
+| Per-VM disk latency/throughput attribution | 1 companion | `vm.disk.{latency,read_bytes_sec,write_bytes_sec}` — resolves live storage counters to VM names via an in-memory VHD-path map (`Get-VM \| Get-VMHardDiskDrive`), correcting for Perfmon's raw-path-only instance strings | `host-companion` Windows Service on every host |
+| Failed live-migration alerting | 1 | `hyperv.vmms.migration_failures` — converts Event ID 21026 occurrences into an alertable metric (the general pattern for turning any event-log channel into a detector-eligible signal) | Splunk OTel Collector's `windowseventlogreceiver` + `count` connector |
+| Guest filesystem used % | 1.5 (optional) | `vm.guest.filesystem.used_percent`, per fixed volume — **without deploying anything inside the guest** | Guest Integration Services running, a credential valid inside the guest, `host-companion` |
+| Guest memory used % (incl. static-memory VMs) | 1.5 (optional) | `vm.guest.memory.used_percent` — guest's own OS-reported usage, so it works for static-memory VMs that Hyper-V's Dynamic-Memory-only "Current Pressure" counter can't see at all | same as above |
+| Centralized event-log visibility | 1.6 (optional, config-only) | Guest/host event logs forwarded to one collector via native Windows Event Forwarding, no per-VM collector deployment | Windows Event Forwarding subscription setup |
+| Full in-guest metrics (process/app-level, disk %, real memory, etc.) | 2 (optional) | Everything Tier 1.5 gives you, plus process/service state and application-level metrics — the most complete option | An OTel Collector installed inside every opted-in guest VM (each becomes a separately-billed host) |
+| Dashboards | — | "Hypervisor Overview" (host-level, one row per host) and "VM Detail" (per-VM, including guest metrics if Tier 1.5/2 enabled) | `terraform/dashboards.tf` |
+| Detectors | — | VM health critical, hypervisor CPU high, VM memory pressure high, VM storage latency high, guest filesystem/memory used high, VMMS migration failures | `terraform/detectors.tf` |
+| Native Windows Service deployment | — | Both companion services start on boot, restart on failure, visible in `services.msc` — no Task Scheduler entries, no DPAPI secret files on disk | `installer/` (WiX v4 MSI) |
+| Credential management | — | SCVMM/Splunk credentials read from Windows Credential Manager at service startup, one credential per secret, readable only by the service account | `internal/creds` |
+| poc → production cutover | — | No config change required — `host.type` filters used throughout are environment-agnostic; cutover is just pointing the realm/access token at production | — |
+
+### Choosing your tiers
+
+- **Tiers 0, 1, and 1 companion** are the baseline for any Hyper-V
+  environment — no guest-VM policy decision needed, deploy on the SCVMM
+  console box and every physical host.
+- **Tier 1.5** is the right choice if you want guest filesystem/memory
+  visibility but don't want to deploy a collector inside guest VMs at all —
+  it uses PowerShell Direct (`Invoke-Command -VMId`) over VMBus, so there's
+  no guest network path, no guest firewall rule, and no agent process
+  running inside the guest. Requires guest Integration Services and a
+  valid in-guest credential.
+- **Tier 2** is the right choice if guest-level visibility beyond
+  filesystem/memory (process state, application metrics) is required and
+  the extra per-VM billed-host cost is acceptable.
+- **Tier 1.6** (Windows Event Forwarding) is additive to any of the above —
+  it's a native Windows mechanism, not new code, for centralizing event
+  logs without per-VM collector deployment.
+
+See `docs/architecture.md` for the full tier diagram and resource-attribute
+strategy, and `docs/deployment-guide.md` for install/configure steps
+(including a pilot-enablement procedure for Tier 1.5).
+
 ## Repo layout
 
 ```
