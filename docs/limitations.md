@@ -36,8 +36,11 @@ You do NOT get, from Tier 1 alone:
 
 Getting any of the above would require Tier 2 (`guest-vm-config.yaml`),
 deployed inside the guest. For this customer, that path is closed entirely
-— see item 3 below — so this gap is currently **open**, pending the
-Tier 1.5 (PowerShell Direct guest probe) go/no-go decision.
+— see item 3 below. Tier 1.5 (PowerShell Direct guest probe,
+`internal/guestprobe`) closes guest filesystem used % and guest memory used
+% specifically — implemented and mechanism-validated against a real
+nested-Hyper-V guest — but ships disabled pending fleet-wide go/no-go
+validation; see `docs/known-gaps-remediation.md`, gaps #2/#4.
 
 ## 3. Tier 2 (in-guest collector) is ruled out entirely for this customer, not just fleet-wide
 
@@ -50,17 +53,23 @@ separately, explicitly ruled out deploying any collector inside guest VMs
 at all**, opt-in or otherwise. Tier 2 (`guest-vm-config.yaml`) is kept in
 this repo for reference only and is not part of the proposed solution.
 Practically, this means guest-OS-internal visibility (gap #4) and
-static-memory VM pressure alerting (gap #2) are **permanent, load-bearing,
-open gaps** for this engagement unless Tier 1.5 (PowerShell Direct guest
-probe) clears its own go/no-go decision — this should be represented as
-such, not glossed over as "solved by Tier 2."
+static-memory VM pressure alerting (gap #2) depend entirely on Tier 1.5
+(PowerShell Direct guest probe) for this engagement, since Tier 2 is not an
+option. Tier 1.5 is implemented and mechanism-validated against a real
+nested-Hyper-V guest, but ships disabled (`guest_probe.enabled: false`)
+pending fleet-wide go/no-go validation — treat these as
+**solved-but-not-yet-production-enabled**, not as "solved by Tier 2," until
+that validation completes.
 
 ## 4. Static-memory VMs have no memory-pressure signal from Tier 1
 
 The `Hyper-V Dynamic Memory VM` object's "Current Pressure" counter only
 exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
 `vm.memory.current_pressure` — the `vm_memory_pressure_high` detector
-silently never fires for them. See `docs/known-gaps-remediation.md`, gap #2.
+silently never fires for them. Tier 1.5 (`internal/guestprobe`) closes this
+via the guest's own OS-reported memory usage (`vm.guest.memory.used_percent`),
+implemented and mechanism-validated but disabled pending fleet-wide go/no-go.
+See `docs/known-gaps-remediation.md`, gap #2.
 
 ## 5. VM name extraction from Perfmon instance strings is best-effort, not guaranteed
 
@@ -114,8 +123,10 @@ spot-check before building any "missing series" detector. See gap #7.
 
 Perfmon counters only report data for running VMs — a powered-off VM simply
 stops emitting, which looks identical to "the collector missed a scrape."
-This repo does not attempt VM/host up-down detection; that requires a
-different source of truth (SCVMM). See gap #1.
+Tier 1 (Perfmon) does not attempt VM/host up-down detection at all — that
+requires a different source of truth. Tier 0 (`hyperv-scvmm-poller`, this
+same repo) closes this by polling SCVMM directly for
+`hyperv_vm_up`/`hyperv_host_up`. See gap #1.
 
 ## 9. This is a metrics/logs pipeline + dashboards/detectors — not full navigator parity
 
