@@ -66,6 +66,74 @@ constraint). For this customer, gaps #2 and #4 remain **open**, pending the
 Tier 1.5 (PowerShell Direct guest probe) go/no-go decision — see
 `docs/known-gaps-remediation.md` and `docs/phase3-guest-probe-plan.md`.
 
+### 4. Tier 1.5 pilot enablement (optional — requires customer go/no-go first)
+
+Tier 1.5 (`internal/guestprobe`, wired into `host-companion`) closes gaps #2
+and #4 **without deploying anything inside the guest** — no Tier 2 collector,
+no in-guest agent, no guest network path. It ships disabled
+(`guest_probe.enabled: false`) and stays that way until the three go/no-go
+criteria in `docs/phase3-guest-probe-plan.md` are validated against the
+customer's real fleet:
+
+1. `Invoke-Command -VMId` latency/load at real fleet density (VMs-per-host)
+2. Guest Integration Services coverage across the fleet's actual guest OS
+   versions
+3. Whether a single shared guest-local credential is acceptable, or
+   per-VM/per-domain credential handling is required
+
+**Do not flip `guest_probe.enabled` to `true` fleet-wide.** The steps below
+are for a small, supervised pilot on a handful of VMs only, to gather the
+data needed to answer criteria 1–3 above — mirrors the "start with a small
+pilot cluster" recommendation under Rollout sequencing below.
+
+1. **Provision the guest-local credential** — a read-only account valid
+   *inside* the pilot guests (via the customer's existing guest-VM
+   provisioning process; this is not a domain-admin or host-level account).
+   On each pilot host, store it in Windows Credential Manager under the name
+   `host-companion.yaml` expects (`guest_probe.credential_name`, default
+   `hyperv-o11y/guest-probe`):
+   ```powershell
+   cmdkey /generic:hyperv-o11y/guest-probe /user:<guest-local-user> /pass:<secret>
+   ```
+   Confirm guest Integration Services are current on each pilot VM
+   (`Get-VM <name> | Select IntegrationServicesState` — must report `Up to
+   date`) before including it below; this is exactly go/no-go criterion #2,
+   spot-checked per pilot VM.
+
+2. **Scope the pilot to specific VMs** — edit
+   `host-companion.yaml` on each pilot host:
+   ```yaml
+   guest_probe:
+     enabled: true
+     vm_include: ["PilotVM01", "PilotVM02"]   # explicit names or glob patterns; empty = nothing probed
+     sample_interval: 5m
+     sample_timeout: 30s
+     credential_name: "hyperv-o11y/guest-probe"
+   ```
+   `vm_include` is opt-in and empty by default — no VM is probed just because
+   `enabled: true` is set. Keep this list to the pilot VMs only.
+
+3. **Restart the service** (`Restart-Service hyperv-host-companion`) and
+   confirm in the service's log output that the guest-probe ticker starts
+   firing (`guest probe: vm=<name>: ...` on failure, or successful gauge
+   exports with no matching log line on success).
+
+4. **Confirm the metrics land** — `vm.guest.filesystem.used_percent`
+   (tagged `vm.name`, `drive_letter`) and `vm.guest.memory.used_percent`
+   (tagged `vm.name`) should appear on the pilot VMs' entities in Splunk
+   Observability Cloud within one `sample_interval`. The `guest_filesystem_used`
+   and `guest_memory_used` charts on the "VM Detail" dashboard
+   (`terraform/dashboards.tf`) will populate for pilot VMs only.
+
+5. **Gather go/no-go data during the pilot** — session latency/CPU
+   impact on the host (criterion #1), any IC-related probe failures logged
+   for VMs beyond what step 1 already screened (criterion #2), and whether
+   the shared-credential model held up to the customer's security review
+   (criterion #3). Do not widen `vm_include` or roll out to additional hosts
+   until all three are resolved — `vm_guest_filesystem_used_high` and
+   `vm_guest_memory_used_high` detectors also ship `disabled = true` in
+   `terraform/detectors.tf` pending the same decision.
+
 ## Test / verify plan
 
 1. **Ingestion sanity check** — in Infrastructure Monitoring, confirm hosts
