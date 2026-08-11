@@ -35,34 +35,27 @@ collection mechanism with a distinct blast radius — see
 │  vm.disk.{latency,read_bytes_sec,write_bytes_sec} via in-memory disk    │
 │  map (Get-VM | Get-VMHardDiskDrive), OTLP to the host-local Splunk      │
 │  OTel Collector above  -> gap #3 (VHD attribution, SOLVED)              │
-└──────────────────────────────┬───────────────────────────────────┬─────┘
-                                │ signalfx exporter                 │
-                                ▼                                   │
-                  Splunk Observability Cloud                        │
-                  (ingest.$SPLUNK_REALM.signalfx.com)                │
-                                ▲                                   │
-              ┌─────────────────┴──────────────────┐                │
-              │ Tier 1.5 — PowerShell Direct        │                │
-              │ guest probe (implemented,           │                │
-              │ disabled by default pending          │                │
-              │ go/no-go — now the ONLY viable       │                │
-              │ in-guest path for this customer,     │                │
-              │ since Tier 2 below is ruled out)      │                │
-              │ in-guest metrics with no guest       │                │
-              │ network egress or agent required     │                │
-              └──────────────────────────────────────┘                │
-              ┌──────────────────────────────────────┐                │
-              │ Future idea, not gap-driven, not built │                │
-              │ Windows Event Forwarding — would       │                │
-              │ centralize guest/host event logs       │                │
-              │ without per-VM collector deployment    │                │
-              └──────────────────────────────────────┘                │
-┌────────────────────────────────────────────────────────────────────┐
-│  Tier 2 — Guest VM — RULED OUT FOR THIS CUSTOMER (gap #2, #4)     │
-│  Splunk OTel Collector (otel-collector/guest-vm-config.yaml)     │
-│  Customer will not deploy any collector inside guest VMs, opt-in  │
-│  or otherwise. Kept for reference only — not part of this proposal.│
-└────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────┬─────────────────────────────────────┘
+                                │ signalfx exporter
+                                ▼
+                  Splunk Observability Cloud
+                  (ingest.$SPLUNK_REALM.signalfx.com)
+                                ▲
+              ┌─────────────────┴──────────────────┐
+              │ Tier 1.5 — PowerShell Direct        │
+              │ guest probe (implemented,           │
+              │ disabled by default pending          │
+              │ go/no-go — the only in-guest         │
+              │ metrics path in this proposal)        │
+              │ in-guest metrics with no guest       │
+              │ network egress or agent required     │
+              └──────────────────────────────────────┘
+              ┌──────────────────────────────────────┐
+              │ Future idea, not gap-driven, not built │
+              │ Windows Event Forwarding — would       │
+              │ centralize guest/host event logs       │
+              │ without per-VM collector deployment    │
+              └──────────────────────────────────────┘
 ```
 
 ## Tier-by-tier summary
@@ -73,7 +66,6 @@ collection mechanism with a distinct blast radius — see
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
 | 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
-| 2 | Splunk OTel Collector, `guest-vm-config.yaml` | **Ruled out for this customer** — not opt-in, not fleet-wide, not deployed at all | Kept for reference only; does not close #2/#4 for this engagement |
 
 **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
 native Windows mechanism that could centralize event-log visibility (host +
@@ -84,38 +76,19 @@ every numbered tier above, it isn't tied to a specific finding.
 ## Resource attribute strategy
 
 This is the load-bearing design decision in the repo — get this wrong and
-Tier 1/Tier 2 data won't correlate, and dashboards/detectors (which filter on
-`host.type`) silently return nothing.
+dashboards/detectors (which filter on `host.type`) silently return nothing.
 
 | Attribute | Set by | Value | Purpose |
 |---|---|---|---|
-| `host.type` | `resource/hypervisor_tag`, `resource/vm_tag`, `resource/guest_tag` | `hypervisor` \| `hypervisor_managed_vm` | Every chart/detector filter in `terraform/dashboards.tf` and `terraform/detectors.tf` is keyed on this. Determines whether a metric is host-side or VM-side. |
-| `host.name` | `resourcedetection` (Tier 1 host/hypervisor pipelines) or `transform/vm_hostname` (Tier 1 vm pipeline, copied from `vm.name`) or `resourcedetection` (Tier 2, guest OS hostname) | Hypervisor's own hostname, or the VM's name | The entity key. For Tier 1 VM metrics and Tier 2 guest metrics to land on the **same** Splunk Observability Cloud entity, the Hyper-V VM name must exactly match the guest OS hostname — see "Correlation requirement" below. |
+| `host.type` | `resource/hypervisor_tag`, `resource/vm_tag` | `hypervisor` \| `hypervisor_managed_vm` | Every chart/detector filter in `terraform/dashboards.tf` and `terraform/detectors.tf` is keyed on this. Determines whether a metric is host-side or VM-side. |
+| `host.name` | `resourcedetection` (Tier 1 host/hypervisor pipelines) or `transform/vm_hostname` (Tier 1 vm pipeline, copied from `vm.name`) | Hypervisor's own hostname, or the VM's name | The entity key — determines whether a metric lands as its own VM entity or merges onto the host entity. |
 | `vm.name` | `transform/vm_name` (extracted from noisy Perfmon instance strings — see below) | Clean VM name | Intermediate attribute, promoted to `host.name` and used as the `groupbyattrs` key. |
-| `hypervisor.host.name` | `resource/vm_tag` (Tier 1, `${env:COMPUTERNAME}`) or `resource/guest_tag` (Tier 2, `${env:HYPERV_HOST_NAME}`) | Parent hypervisor's hostname | Stamped onto every VM's metrics (both tiers) so the infra navigator can link VM -> parent host, independent of whether `host.name` correlation (above) also works. |
+| `hypervisor.host.name` | `resource/vm_tag` (`${env:COMPUTERNAME}`) | Parent hypervisor's hostname | Stamped onto every VM's metrics so the infra navigator can link VM -> parent host, independent of whether `host.name` correlation (above) also works. |
 | `virtualization.system` | `resource/hypervisor_tag` | `hyperv` | Distinguishes from other virtualization platforms if this repo's output ever lands alongside vSphere/other hypervisor data in the same org. |
 
-## Correlation requirement (Tier 1 <-> Tier 2) — reference only, Tier 2 ruled out for this customer
-
-This section documents how Tier 1/Tier 2 correlation would work *if* Tier 2
-were deployed. It is kept for reference (e.g. other customers without this
-constraint) — this customer has ruled out deploying any collector inside
-guest VMs, so Tier 2 is not part of the proposed solution and this
-correlation requirement does not apply here. For a given VM's Tier 1
-(host-view) and Tier 2 (in-guest) metrics to appear on the same entity:
-
-1. The guest OS hostname must exactly match the Hyper-V VM name shown in
-   `Get-VM` / Hyper-V Manager. If they differ, override `host.name` in
-   `guest-vm-config.yaml`'s `resourcedetection/guest` (or add an explicit
-   `resource` processor attribute) to the Hyper-V VM name instead of relying
-   on OS-hostname auto-detection.
-2. `HYPERV_HOST_NAME` must be set in the Tier 2 collector's environment to
-   the parent hypervisor's hostname, matching what Tier 1 stamps via
-   `${env:COMPUTERNAME}`.
-
 If VM names contain duplicates on the same host (see
-`docs/known-gaps-remediation.md`, gap #6), correlation degrades further:
-multiple VMs' metrics will merge onto one entity. That's a Hyper-V-estate
+`docs/known-gaps-remediation.md`, gap #6), correlation degrades: multiple
+VMs' metrics will merge onto one entity. That's a Hyper-V-estate
 naming-hygiene problem, not something the collector config can resolve.
 
 ## Why `vm.name` extraction is non-trivial
@@ -167,9 +140,8 @@ if other event-log channels need to become alertable — see
 - `terraform/main.tf` — `signalfx` provider + `signalfx_dashboard_group.hyperv`
 - `terraform/dashboards.tf` — two dashboards: "Hypervisor Overview" (Tier 1
   only, one row per host) and "VM Detail" (Tier 1 VM metrics; the guest
-  filesystem chart now points at Tier 1.5's real
-  `vm.guest.filesystem.used_percent` metric, not the old Tier 2 placeholder
-  — see gap #4)
+  filesystem chart points at Tier 1.5's real `vm.guest.filesystem.used_percent`
+  metric — see gap #4)
 - `terraform/detectors.tf` — VM health critical, hypervisor CPU high, VM
   memory pressure high, VM storage latency high (unit confirmed via
   real-fleet empirical analysis and enabled at a 20ms threshold — gap #5,
@@ -188,11 +160,10 @@ more than any individual metric mapping.
   (`hyperv-scvmm-poller`, `hyperv-host-companion`); this repo's job is to make
   that data (once emitted as OTLP/dimension-API writes with matching resource
   attributes) land on the same entities as everything else here.
-- Deploy any collector inside guest VMs at all for this customer — Tier 2 is
-  ruled out entirely (not just fleet-wide), per explicit customer decision.
-  See gap #2/#4 and `guest-vm-config.yaml`'s header comment. Tier 1.5
-  (PowerShell Direct guest probe) is the only in-guest-metrics path left on
-  the table, pending its own go/no-go decision.
+- Deploy any collector inside guest VMs at all for this customer, per
+  explicit customer decision (see gap #2/#4). Tier 1.5 (PowerShell Direct
+  guest probe) is the only in-guest-metrics path in this proposal, pending
+  its own go/no-go decision.
 - Attempt full content/navigator parity with the vSphere integration in one
   pass — this is a field accelerator (dashboards + detectors as code), not a
   claim of native-integration-equivalent coverage. See `docs/limitations.md`.

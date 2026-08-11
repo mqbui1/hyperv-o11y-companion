@@ -6,8 +6,8 @@
 // Services running and a credential valid inside the guest. This is the
 // only mechanism in this repo that reads data actually inside a guest OS,
 // closing gaps #2 (static-memory VM pressure) and #4 (guest filesystem
-// used %) without deploying anything inside the guest — the constraint
-// that rules out Tier 2 for this customer.
+// used %) without deploying anything inside the guest — this customer has
+// ruled out deploying any collector inside guest VMs, opt-in or otherwise.
 package guestprobe
 
 import (

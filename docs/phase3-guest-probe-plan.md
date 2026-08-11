@@ -19,11 +19,9 @@ OS supports PowerShell Direct (Windows guests only — no Linux support, this
 only closes the gap for Windows-guest VMs), and a credential valid inside
 the guest.
 
-This sits between Tier 1 (host-visible only, e.g. VHD file size) and Tier 2
-(full in-guest OTel Collector, billed as a separate host) as a way to get
-a few specific in-guest values — most importantly guest filesystem used %
-(gap #4) — for VMs that don't justify Tier 2's per-VM billing cost, without
-deploying anything inside the guest at all.
+This sits above Tier 1 (host-visible only, e.g. VHD file size) as a way to
+get a few specific in-guest values — most importantly guest filesystem used
+% (gap #4) — without deploying anything inside the guest at all.
 
 ## Why this belongs in `host-companion`, not a new binary
 
@@ -136,8 +134,8 @@ confirm:
    builder/sampler tickers already running.
 2. Guest Integration Services coverage across the fleet's actual guest OS
    versions — if a meaningful fraction of guests don't have current
-   Integration Services, Tier 1.5's coverage will have its own gap,
-   analogous to gap #2/#4's Tier 1/Tier 2 coverage gaps.
+   Integration Services, Tier 1.5's coverage will have its own gap for
+   gaps #2/#4.
 3. Whether a single shared guest-local credential is acceptable from a
    security-review standpoint, or whether per-VM/per-domain credential
    handling is required — this materially changes `internal/creds` usage
@@ -146,10 +144,11 @@ confirm:
 ## Non-goals for Phase 3
 
 - Linux guest support — PowerShell Direct is Windows-guest-only; Linux VMs
-  needing in-guest filesystem/memory visibility still require Tier 2.
+  needing in-guest filesystem/memory visibility are not covered by this
+  mechanism.
 - Any metric beyond guest filesystem used % (gap #4) and guest memory used
   % (gap #2) without a separate ask — Tier 1.5 is scoped to these two
-  specific gaps for VMs that don't warrant Tier 2, not to become a
-  general-purpose in-guest collector. Both are gathered in one
+  specific gaps, not to become a general-purpose in-guest collector. Both
+  are gathered in one
   `Invoke-Command` session per VM per cycle (`internal/guestprobe.Sample`),
   not two, to minimize PowerShell Direct session overhead at fleet scale.

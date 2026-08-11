@@ -11,7 +11,6 @@ steps themselves, with FDE/solutions support as needed.
 |---|---|---|
 | Dashboards + detectors | `terraform/*.tf` | One-time, org-wide |
 | Host-side collector config | `otel-collector/hypervisor-host-config.yaml` | Every Hyper-V host |
-| Guest-side collector config | `otel-collector/guest-vm-config.yaml` | **Ruled out for this customer** — reference only, do not deploy |
 | Gap tracking / validation checklist | `docs/known-gaps-remediation.md` | Reference during test/verify |
 | Architecture reference | `docs/architecture.md` | Resource-attribute strategy, vm.name extraction |
 | Limitations reference | `docs/limitations.md` | What this accelerator cannot do |
@@ -57,21 +56,17 @@ different from the ingest token used in step 2/3.
 This step touches every host and is what fills the "Hyper-V: Hypervisor
 Overview" dashboard.
 
-### 3. Guest-side collector (`guest-vm-config.yaml`) — do not deploy for this customer
+### 3. Tier 1.5 pilot enablement (optional — requires customer go/no-go first)
 
 This customer has explicitly ruled out deploying any collector inside guest
-VMs, opt-in or otherwise. `otel-collector/guest-vm-config.yaml` is kept in
-this repo for reference only (e.g. other engagements without this
-constraint). For this customer, gaps #2 and #4 are solved via Tier 1.5
+VMs, opt-in or otherwise. Gaps #2 and #4 are instead solved via Tier 1.5
 (PowerShell Direct guest probe, mechanism-validated), but remain disabled
 in production pending fleet-wide go/no-go validation — see
 `docs/known-gaps-remediation.md` and `docs/phase3-guest-probe-plan.md`.
 
-### 4. Tier 1.5 pilot enablement (optional — requires customer go/no-go first)
-
 Tier 1.5 (`internal/guestprobe`, wired into `host-companion`) closes gaps #2
-and #4 **without deploying anything inside the guest** — no Tier 2 collector,
-no in-guest agent, no guest network path. It ships disabled
+and #4 **without deploying anything inside the guest** — no in-guest agent,
+no guest network path. It ships disabled
 (`guest_probe.enabled: false`) and stays that way until the three go/no-go
 criteria in `docs/phase3-guest-probe-plan.md` are validated against the
 customer's real fleet:

@@ -28,10 +28,8 @@
 #   host.name              = <derived VM name> (vm pipeline, after groupbyattrs)
 #   host.type              = "hypervisor" | "hypervisor_managed_vm"
 #   hypervisor.host.name   = this hypervisor's hostname, stamped onto VM metrics
-#                            too, so Tier 1 (this file) and Tier 2
-#                            (guest-vm-config.yaml) can both be correlated to the
-#                            same host.name in Splunk Observability Cloud IF the
-#                            Hyper-V VM name matches the guest OS hostname.
+#                            too, so this file's VM metrics link back to their
+#                            parent host in the infra navigator.
 # =============================================================================
 
 receivers:
@@ -142,8 +140,7 @@ receivers:
   # LIMITATION: these are host-side counters only (assigned CPU %, memory
   # balance, vNIC throughput, virtual disk FILE I/O). They cannot see inside
   # the guest OS (no real filesystem free space, no processes, no app
-  # metrics) — that requires Tier 2 (guest-vm-config.yaml). See
-  # docs/limitations.md.
+  # metrics) — see docs/limitations.md.
   # ---------------------------------------------------------------------------
   windowsperfcounters/vm:
     collection_interval: 30s

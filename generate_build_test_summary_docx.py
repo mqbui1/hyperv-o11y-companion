@@ -155,9 +155,11 @@ body(
     "dashboards, detectors, and OTel Collector configs (formerly a standalone "
     "\u201caccelerator\u201d repo) plus two native Windows Services that replace four "
     "independently-scheduled PowerShell script pairs the customer was running via Windows "
-    "Task Scheduler. Together they implement a five-tier collection model covering the "
-    "hypervisor host and the SCVMM management plane. The guest-OS tier (Tier 2) is "
-    "explicitly ruled out for this customer \u2014 see \u201cTier breakdown\u201d below."
+    "Task Scheduler. Together they implement a multi-tier collection model covering the "
+    "hypervisor host, the SCVMM management plane, and guest-OS data via a mechanism that "
+    "requires nothing to be deployed inside the guest \u2014 this customer has explicitly "
+    "ruled out deploying any collector inside guest VMs, opt-in or otherwise \u2014 see "
+    "\u201cTier breakdown\u201d below."
 )
 body(
     "This round of work stood up the full companion-service stack from scratch on a live "
@@ -171,12 +173,12 @@ body(
 # =====================================================================
 heading1("What Was Built")
 
-heading2("Five-tier collection architecture")
+heading2("Tiered collection architecture")
 body(
     "Started as a two-tier host/guest split (mirroring the vSphere navigator pattern) and "
-    "grew three more tiers once real customer POC data showed Perfmon alone can't see VM "
-    "power-state, live-migration failures, or in-guest data at an affordable metric-volume "
-    "cost. Each tier is a distinct collection mechanism with a distinct blast radius:",
+    "grew more tiers once real customer POC data showed Perfmon alone can't see VM "
+    "power-state, live-migration failures, or in-guest data. Each tier is a distinct "
+    "collection mechanism with a distinct blast radius:",
     space_after=8,
 )
 add_table(
@@ -186,14 +188,13 @@ add_table(
         ["1", "Splunk OTel Collector, hypervisor-host-config.yaml", "Every Hyper-V host", "Built & validated"],
         ["1 companion", "hyperv-host-companion (Windows Service)", "Every Hyper-V host, alongside Tier 1", "Built & tested end-to-end this round"],
         ["1.5", "PowerShell Direct guest probe (VMBus, no guest network/agent)", "Host-initiated", "Implemented, mechanism-validated on a real nested Hyper-V guest; ships disabled pending fleet go/no-go"],
-        ["2", "Splunk OTel Collector, guest-vm-config.yaml", "N/A \u2014 ruled out for this customer", "Reference only \u2014 not deployed, opt-in or otherwise"],
     ],
     col_widths=[0.8, 2.6, 1.9, 1.7],
 )
 
 heading2("Tier breakdown \u2014 what each tier represents")
 body(
-    "What started as a two-tier host/guest split grew into five tiers as real customer-"
+    "What started as a two-tier host/guest split grew into more tiers as real customer-"
     "POC findings showed a plain host/guest split couldn't see everything. Each tier is a "
     "genuinely different collection mechanism, not a variation on the same idea:",
     space_after=8,
@@ -201,9 +202,8 @@ body(
 bullet("Tier 0 \u2014 SCVMM console: a single centralized service polling the SCVMM management plane (not per-host Perfmon). This is the only place VM/host power-state and SCVMM's own OperatingSystem field are visible \u2014 Perfmon simply has no concept of \u201coff\u201d and can't see SCVMM's inventory metadata. Closes gaps #1 and #8.", bold=False)
 bullet("Tier 1 \u2014 every Hyper-V host: the generic OTel windowsperfcounters/windowseventlogreceiver pipeline, deployed identically on every host. Sees hypervisor-visible resource allocation (vCPU %, assigned memory, virtual disk file I/O, vNIC throughput) \u2014 cheap (no extra billable hosts) but structurally cannot see anything happening inside a guest's own OS.")
 bullet("Tier 1 companion \u2014 same hosts as Tier 1, but a purpose-built Go service (hyperv-host-companion) instead of a generic receiver. Exists because per-VM disk-latency/throughput attribution needs live VM-to-VHD-path resolution that the generic Perfmon receiver can't do on its own. Closes gap #3.")
-bullet("Tier 1.5 \u2014 PowerShell Direct guest probe: the host reaches into a guest over VMBus (Invoke-Command -VMId) to run a narrow, specific query \u2014 no guest network stack, no guest firewall rule, no agent installed inside the guest at all. This is fundamentally different from Tier 2: nothing is deployed inside the guest, so it doesn't trigger the customer's \u201cno in-guest collector\u201d constraint. Implemented and mechanism-validated end-to-end on a real nested Hyper-V guest this round \u2014 the only remaining candidate for gaps #2 and #4 \u2014 but ships with guest_probe.enabled: false pending fleet-wide go/no-go (session load at scale, real-fleet Integration Services coverage, shared-credential security review).")
+bullet("Tier 1.5 \u2014 PowerShell Direct guest probe: the host reaches into a guest over VMBus (Invoke-Command -VMId) to run a narrow, specific query \u2014 no guest network stack, no guest firewall rule, no agent installed inside the guest at all. Nothing is deployed inside the guest, so it doesn't trigger the customer's \u201cno in-guest collector\u201d constraint. Implemented and mechanism-validated end-to-end on a real nested Hyper-V guest this round \u2014 the only candidate for gaps #2 and #4 \u2014 but ships with guest_probe.enabled: false pending fleet-wide go/no-go (session load at scale, real-fleet Integration Services coverage, shared-credential security review).")
 bullet("Future idea, not gap-driven, not built \u2014 Windows Event Forwarding: a native Windows mechanism that could forward event logs from hosts/guests to one central collector, without installing a per-VM collector. No code, no config in this repo, and no customer-POC gap requires it \u2014 unlike every numbered tier above, it isn't tied to a specific finding.")
-bullet("Tier 2 \u2014 in-guest OTel Collector: the only tier that installs anything inside a guest VM. It's the most complete option (real guest-OS-internal metrics) but the most expensive (every VM becomes a separately-billed host) and is the tier this customer has explicitly ruled out, opt-in or otherwise. Kept in the repo for reference only \u2014 not part of the solution proposed here.")
 
 heading2("hyperv-o11y-companion \u2014 the two consolidated Windows Services")
 body(
@@ -311,8 +311,7 @@ heading1("What's Not Yet Solved / Deliberately Out of Scope")
 
 bullet("Duplicate VM names on the same Hyper-V host: metrics for identically-named VMs will merge onto one entity. Not fixable in collector config \u2014 flagged as a customer-side naming-hygiene recommendation.")
 bullet("Storage-metric misattribution when a VHDX filename doesn't match its owning VM's name (cloned templates, renamed disks, reused files): a real, unresolved limitation with no reliable signal to detect it from the raw counter alone.")
-bullet("Tier 1.5 (PowerShell Direct guest probe): implemented and mechanism-validated end-to-end on a real nested Hyper-V guest \u2014 closes gaps #2 and #4 without deploying anything inside the guest at all. Ships disabled (guest_probe.enabled: false) and stays that way until a separate fleet-wide go/no-go decision (session latency/load at scale, real-fleet Integration Services coverage, shared-credential security review).")
-bullet("Tier 2 (in-guest collector) deployment: ruled out entirely for this customer, not just fleet-wide \u2014 the customer does not want any collector deployed inside guest VMs, opt-in or otherwise. Kept in the repo for reference only (e.g. other engagements without this constraint).")
+bullet("Tier 1.5 (PowerShell Direct guest probe): implemented and mechanism-validated end-to-end on a real nested Hyper-V guest \u2014 closes gaps #2 and #4 without deploying anything inside the guest at all. Ships disabled (guest_probe.enabled: false) and stays that way until a separate fleet-wide go/no-go decision (session latency/load at scale, real-fleet Integration Services coverage, shared-credential security review). This customer has separately ruled out deploying any collector inside guest VMs at all, opt-in or otherwise.")
 bullet("hyperv-scvmm-poller (Tier 0) is code-complete (pollMetrics and pollGuestOS both implemented) but not yet run end-to-end against a real SCVMM server the way hyperv-host-companion was this round \u2014 next priority for the same live-test treatment.")
 
 # =====================================================================

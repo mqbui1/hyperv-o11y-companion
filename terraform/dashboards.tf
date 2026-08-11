@@ -1,7 +1,7 @@
 # =============================================================================
 # Charts + dashboards mirroring the vSphere navigator's host/VM split.
-# Metric names here match otel-collector/hypervisor-host-config.yaml and
-# guest-vm-config.yaml. Adjust filters/dimensions if you rename anything.
+# Metric names here match otel-collector/hypervisor-host-config.yaml.
+# Adjust filters/dimensions if you rename anything.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ resource "signalfx_dashboard" "hypervisor_overview" {
 }
 
 # ---------------------------------------------------------------------------
-# Dashboard 2: VM Detail (Tier 1 host-view metrics + Tier 2 in-guest metrics,
+# Dashboard 2: VM Detail (Tier 1 host-view metrics + Tier 1.5 in-guest metrics,
 # both landing on the same host.name resource — see docs/architecture.md)
 # ---------------------------------------------------------------------------
 

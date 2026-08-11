@@ -85,10 +85,9 @@ type GuestProbeConfig struct {
 	// VMInclude is an opt-in curated subset by VM name (filepath.Match
 	// glob patterns, e.g. "WebServer*"; matched in
 	// cmd/host-companion/main.go). Empty means no VMs are probed even if
-	// Enabled is true — there is no fleet-wide
-	// default, mirroring how Tier 2 was scoped before being ruled out
-	// entirely; Tier 1.5 starts opt-in until go/no-go criterion #1
-	// (fleet-scale Invoke-Command -VMId latency) is validated.
+	// Enabled is true — there is no fleet-wide default; Tier 1.5 starts
+	// opt-in until go/no-go criterion #1 (fleet-scale Invoke-Command
+	// -VMId latency) is validated.
 	VMInclude      []string      `yaml:"vm_include"`
 	SampleInterval time.Duration `yaml:"sample_interval"`
 	SampleTimeout  time.Duration `yaml:"sample_timeout"`

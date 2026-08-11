@@ -29,28 +29,20 @@ during a real customer POC.
                         Splunk Observability Cloud
                  (dashboards + detectors provisioned via terraform/*.tf)
                                         ▲
-                                        │ (not used — see below)
-┌───────────────────────────────────────┴──────────────────────┐
-│  Guest VM (Tier 2 — RULED OUT FOR THIS CUSTOMER)              │
-│  otel-collector/guest-vm-config.yaml                          │
-│  Customer will not deploy any collector inside guest VMs,     │
-│  opt-in or otherwise. Kept for reference only.                │
-└─────────────────────────────────────────────────────────────┘
+              ┌─────────────────────────┴──────────────────────┐
+              │ Tier 1.5 — PowerShell Direct guest probe        │
+              │ (implemented, disabled by default pending       │
+              │ go/no-go — see docs/phase3-guest-probe-plan.md) │
+              └──────────────────────────────────────────────────┘
 ```
 
-**Why two tiers were originally designed, and why Tier 2 is now ruled out
-for this customer:** Tier 1 is cheap (no extra billable hosts) but can only
-see hypervisor-visible resource allocation — not real guest-OS internals.
-Tier 2 would see inside the guest but makes every VM a separately-billed
-host (one customer POC measured an order of magnitude more VMs than
-physical hosts — Tier 2 fleet-wide would multiply billable hosts several-fold). That billing math was the
-original reason Tier 2 was scoped opt-in/curated rather than fleet-wide —
-but this customer has separately ruled out deploying **any** in-guest
-collector, opt-in or otherwise, so Tier 2 does not close gap #4 (or #2) for
-this engagement at all. Tier 1.5 (PowerShell Direct guest probe — implemented
-in `internal/guestprobe`, mechanism-validated against a real nested-Hyper-V
-guest, ships `guest_probe.enabled: false` pending fleet-wide go/no-go) is the
-only remaining candidate for those gaps — see `docs/architecture.md`.
+Tier 1 is cheap (no extra billable hosts) but can only see
+hypervisor-visible resource allocation — not real guest-OS internals. Tier
+1.5 (PowerShell Direct guest probe — implemented in `internal/guestprobe`,
+mechanism-validated against a real nested-Hyper-V guest, ships
+`guest_probe.enabled: false` pending fleet-wide go/no-go) closes that gap
+for gaps #2 and #4 without deploying anything inside the guest — see
+`docs/architecture.md`.
 
 **The load-bearing design decision** is the resource-attribute strategy:
 every dashboard/detector filters on `host.type` (`hypervisor` vs.

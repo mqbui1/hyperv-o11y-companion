@@ -86,18 +86,6 @@ go/no-go validation — see `docs/phase3-guest-probe-plan.md`.
 |---|---|---|
 | `hyperv.vmms.migration_failures` | count | Live-migration failures (Event ID 21026 on the VMMS-Admin channel), converted from raw event log into an alertable metric via the `count` connector — the general pattern for making any event-log channel detector-eligible |
 
-### Tier 2 — in-guest OTel Collector (optional, `guest-vm-config.yaml`)
-
-Every VM running this becomes a separately-billed host. Full guest-OS
-visibility via the standard `hostmetrics` receiver plus one legacy-parity
-counter set:
-
-| Metric | Unit | What it tells you |
-|---|---|---|
-| `hostmetrics` receiver (`cpu`, `memory`, `disk`, `filesystem`, `network`, `paging`, `processes` scrapers) | (OTel semantic conventions) | Full guest-OS-internal visibility: real CPU/memory/disk/filesystem/network utilization, process-level data — everything Tier 1/1.5 structurally cannot see |
-| `guest.disk.free_space` | % | Guest logical disk free space — optional legacy metric-name parity with the archived Splunk Add-on for Microsoft Hyper-V |
-| `guest.disk.free_mb` | MBy | Guest logical disk free space in MB — same parity purpose |
-
 ## What's already visualized (Terraform-provisioned)
 
 ### Dashboard: "Hyper-V: Hypervisor Overview" (one row per host)
@@ -148,9 +136,6 @@ truth for your environment.
   PowerShell Direct over VMBus, no guest network path, no agent process.
   Requires guest Integration Services and a credential valid inside the
   guest.
-- **Tier 2** is the right choice if guest-level visibility beyond
-  filesystem/memory (process state, application metrics) is required and
-  the extra per-VM billed-host cost is acceptable.
 - **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
   native Windows mechanism that could centralize event-log visibility (host +
   guest) without per-VM collector deployment. Not part of this proposal; no

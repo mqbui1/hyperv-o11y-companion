@@ -102,9 +102,8 @@ On each Hyper-V host, after installing the Splunk OTel Collector:
    - `SPLUNK_REALM`
 3. Restart the `splunk-otel-collector` service.
 
-Do not deploy `otel-collector/guest-vm-config.yaml` inside any guest VM — this
-is Tier 2, kept in the repo for reference only, not part of this customer's
-proposed solution (see `docs/architecture.md`).
+This customer has explicitly ruled out deploying any collector inside guest
+VMs, opt-in or otherwise (see `docs/architecture.md`).
 
 ## 6. Configure `scvmm-poller.yaml` (console box)
 

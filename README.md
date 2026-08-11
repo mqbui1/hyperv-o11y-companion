@@ -25,11 +25,9 @@ implemented but not yet live-tested end-to-end, 1 unconfirmed against the
 original POC's own cluster — see "Known gaps" below).
 
 **Important customer constraint:** this customer has explicitly ruled out
-deploying any collector inside guest VMs, opt-in or otherwise. Tier 2
-(`otel-collector/guest-vm-config.yaml`) is kept in this repo for reference
-only (e.g. future engagements without this constraint) and is **not** part
-of the proposed solution here. Gaps #2 (static-memory VM memory pressure)
-and #4 (guest filesystem used %) are solved via Tier 1.5 (PowerShell Direct
+deploying any collector inside guest VMs, opt-in or otherwise. Gaps #2
+(static-memory VM memory pressure) and #4 (guest filesystem used %) are
+solved via Tier 1.5 (PowerShell Direct
 guest probe — implemented in `internal/guestprobe`, wired into
 `host-companion`, mechanism-validated on a real nested-Hyper-V test), which
 requires nothing to be deployed inside the guest. It ships with
@@ -55,8 +53,6 @@ installer/                       WiX v4 MSI installer (both services)
 otel-collector/
   hypervisor-host-config.yaml    Tier 1 — deploy on every Hyper-V host
                                   (gaps #6, #7, #9, #10)
-  guest-vm-config.yaml           Tier 2 — RULED OUT for this customer,
-                                  reference only, do not deploy
   test/                          Local Docker test harness (no Windows host
                                   or Splunk account needed)
 terraform/
@@ -94,8 +90,8 @@ I/O, vNIC throughput) plus the malformed-`vm.name` fix (gap #6), the
 disk-latency scale correction (gap #5), the corrected network counter
 names (gap #7), and the VMMS migration-failure event-to-metric conversion
 (gap #9). Cheap — no extra billable hosts — but structurally cannot see
-anything happening inside a guest's own OS; that's what Tiers 1
-companion/1.5/2 are for. This is what fills the "Hyper-V: Hypervisor
+anything happening inside a guest's own OS; that's what Tier 1
+companion/1.5 are for. This is what fills the "Hyper-V: Hypervisor
 Overview" dashboard (`terraform/dashboards.tf`). See
 `docs/capabilities-and-metrics.md` for the full metrics catalog and
 `docs/deployment-guide.md` for the install steps (Splunk OTel Collector for

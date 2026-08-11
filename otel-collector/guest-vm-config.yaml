@@ -1,5 +1,5 @@
 # =============================================================================
-# Splunk OTel Collector config — Tier 2: Hyper-V GUEST (inside each VM)
+# Splunk OTel Collector config — in-guest OTel Collector (inside each VM)
 #
 # ** RULED OUT FOR THIS CUSTOMER — DO NOT DEPLOY, OPT-IN OR OTHERWISE **
 # This customer has explicitly rejected deploying any collector inside guest
@@ -8,24 +8,26 @@
 # constraint) but is NOT part of the solution proposed to this customer. The
 # guest-filesystem-used-% and static-memory-pressure gaps this file would
 # have closed (see docs/known-gaps-remediation.md, gaps #4 and #2) are
-# tracked as OPEN, blocked on the Tier 1.5 (PowerShell Direct guest probe)
-# go/no-go decision instead — see docs/architecture.md, Tier 1.5.
+# instead closed via the Tier 1.5 PowerShell Direct guest probe (implemented,
+# disabled by default pending go/no-go) — see docs/architecture.md, Tier 1.5.
 #
 # Historical billing context for why this was originally scoped opt-in rather
 # than fleet-wide (now moot, since it's ruled out entirely): every VM running
 # this collector becomes a separately-billed host. One real customer POC
 # measured an order of magnitude more VMs than physical/hypervisor hosts —
-# deploying Tier 2 everywhere would have multiplied the billable host count
+# deploying this everywhere would have multiplied the billable host count
 # several-fold.
 #
-# REQUIRED for Tier 1 <-> Tier 2 correlation in Splunk Observability Cloud:
+# If deployed elsewhere, for correlation with the host-side config in
+# Splunk Observability Cloud:
 #   1. The guest OS hostname must match the Hyper-V VM name exactly (the name
 #      shown in Hyper-V Manager / Get-VM). If they differ, override
 #      `host.name` below to the Hyper-V VM name instead of relying on
 #      auto-detection.
 #   2. HYPERV_HOST_NAME env var must be set at deploy time to the hostname of
-#      the parent Hyper-V host, so hypervisor.host.name matches Tier 1's tag
-#      and the infra navigator can link VM -> parent host both ways.
+#      the parent Hyper-V host, so hypervisor.host.name matches the host-side
+#      config's tag and the infra navigator can link VM -> parent host both
+#      ways.
 # =============================================================================
 
 receivers:

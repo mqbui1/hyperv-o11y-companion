@@ -34,34 +34,17 @@ You do NOT get, from Tier 1 alone:
 - Guest application-level metrics
 - Guest OS patch level, installed software, etc.
 
-Getting any of the above would require Tier 2 (`guest-vm-config.yaml`),
-deployed inside the guest. For this customer, that path is closed entirely
-— see item 3 below. Tier 1.5 (PowerShell Direct guest probe,
-`internal/guestprobe`) closes guest filesystem used % and guest memory used
-% specifically — implemented and mechanism-validated against a real
-nested-Hyper-V guest — but ships disabled pending fleet-wide go/no-go
-validation; see `docs/known-gaps-remediation.md`, gaps #2/#4.
+This customer has explicitly ruled out deploying any collector inside guest
+VMs at all, opt-in or otherwise, so guest-OS-internal visibility depends
+entirely on Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`),
+which closes guest filesystem used % and guest memory used % specifically —
+implemented and mechanism-validated against a real nested-Hyper-V guest —
+but ships disabled pending fleet-wide go/no-go validation; see
+`docs/known-gaps-remediation.md`, gaps #2/#4. Treat these as
+**solved-but-not-yet-production-enabled**, not fully closed, until that
+validation completes.
 
-## 3. Tier 2 (in-guest collector) is ruled out entirely for this customer, not just fleet-wide
-
-Every VM running an OTel Collector becomes a separately-billed host, which
-was the original reason this repo scoped Tier 2 as opt-in/curated rather
-than fleet-wide (in one real customer POC, physical/hypervisor hosts
-hosted an order of magnitude more VMs — fleet-wide Tier 2 would have
-multiplied billable host count several-fold). That billing math is now moot: **this customer has
-separately, explicitly ruled out deploying any collector inside guest VMs
-at all**, opt-in or otherwise. Tier 2 (`guest-vm-config.yaml`) is kept in
-this repo for reference only and is not part of the proposed solution.
-Practically, this means guest-OS-internal visibility (gap #4) and
-static-memory VM pressure alerting (gap #2) depend entirely on Tier 1.5
-(PowerShell Direct guest probe) for this engagement, since Tier 2 is not an
-option. Tier 1.5 is implemented and mechanism-validated against a real
-nested-Hyper-V guest, but ships disabled (`guest_probe.enabled: false`)
-pending fleet-wide go/no-go validation — treat these as
-**solved-but-not-yet-production-enabled**, not as "solved by Tier 2," until
-that validation completes.
-
-## 4. Static-memory VMs have no memory-pressure signal from Tier 1
+## 3. Static-memory VMs have no memory-pressure signal from Tier 1
 
 The `Hyper-V Dynamic Memory VM` object's "Current Pressure" counter only
 exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
@@ -71,7 +54,7 @@ via the guest's own OS-reported memory usage (`vm.guest.memory.used_percent`),
 implemented and mechanism-validated but disabled pending fleet-wide go/no-go.
 See `docs/known-gaps-remediation.md`, gap #2.
 
-## 5. VM name extraction from Perfmon instance strings is best-effort, not guaranteed
+## 4. VM name extraction from Perfmon instance strings is best-effort, not guaranteed
 
 `transform/vm_name` in `hypervisor-host-config.yaml` handles the instance
 string formats observed in Microsoft's documentation and one real customer
@@ -95,7 +78,7 @@ POC. Known incomplete cases:
   (raw instance string as `vm.name`), producing a messy but non-fatal entity
   name rather than a silent drop.
 
-## 6. `vm.storage.latency` unit is unconfirmed
+## 5. `vm.storage.latency` unit is unconfirmed
 
 Documented by Microsoft as 100ns ticks, but not independently verified
 against a raw counter value in a live environment. The
@@ -103,7 +86,7 @@ against a raw counter value in a live environment. The
 do not enable it until validated. See `docs/known-gaps-remediation.md`,
 gap #5.
 
-## 7. Network series completeness is unverified (~20% of VMs missing in one POC)
+## 6. Network series completeness is unverified (~20% of VMs missing in one POC)
 
 A previously-unconfirmed root cause was found and fixed via real-hardware
 validation: `hypervisor-host-config.yaml` requested a counter name
@@ -119,7 +102,7 @@ remains after applying this fix, fall back to the original candidates (VMs
 with no vNIC, powered-off VMs, uncovered instance-string edge case) and
 spot-check before building any "missing series" detector. See gap #7.
 
-## 8. No availability/power-state monitoring
+## 7. No availability/power-state monitoring
 
 Perfmon counters only report data for running VMs — a powered-off VM simply
 stops emitting, which looks identical to "the collector missed a scrape."
@@ -128,7 +111,7 @@ requires a different source of truth. Tier 0 (`hyperv-scvmm-poller`, this
 same repo) closes this by polling SCVMM directly for
 `hyperv_vm_up`/`hyperv_host_up`. See gap #1.
 
-## 9. This is a metrics/logs pipeline + dashboards/detectors — not full navigator parity
+## 8. This is a metrics/logs pipeline + dashboards/detectors — not full navigator parity
 
 The vSphere integration in Splunk Observability Cloud includes curated
 navigators, entity relationships, and content built by the Infrastructure
@@ -138,7 +121,7 @@ Hyper-V, but does not claim equivalent polish, coverage, or long-term
 maintenance commitment. Treat it as a starting point for a field engagement,
 not a packaged product.
 
-## 10. Storage metrics can be misattributed to the wrong VM if disk naming doesn't follow convention
+## 9. Storage metrics can be misattributed to the wrong VM if disk naming doesn't follow convention
 
 `transform/vm_name`'s storage extraction trusts that a VHDX's filename
 matches its owning VM's name (Hyper-V's own default when a VM's disk is

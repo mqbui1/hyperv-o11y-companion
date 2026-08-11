@@ -90,13 +90,6 @@ nowhere to land). `terraform/dashboards.tf`'s VM Detail dashboard and a new
 `vm_guest_filesystem_used_high` detector (ships `disabled = true`) in
 `terraform/detectors.tf` are wired to the real metric name.
 
-**Historical billing context (why Tier 2 was originally scoped opt-in
-rather than fleet-wide — now moot, since it's ruled out entirely):** one
-customer POC measured an order of magnitude more VMs than physical
-hypervisor hosts. Deploying an OTel Collector inside every VM would make
-each VM a separately-billed host — a large multiple increase in billable
-host count.
-
 ## 5. Disk latency unit unconfirmed — SOLVED
 `vm.storage.latency` (from the `Hyper-V Virtual Storage Device` object's
 "Latency" counter) is documented by Microsoft as 100ns ticks, but this had
