@@ -38,7 +38,9 @@ terraform apply
 ```
 
 Requires an **org token** (admin scope) to create dashboards/detectors —
-different from the ingest token used in step 2/3.
+different from the ingest token used in step 2/3. See
+`docs/capabilities-and-metrics.md`'s "What's already visualized" section for
+the full chart/detector breakdown this provisions.
 
 ### 2. Install the Splunk OTel Collector for Windows on every Hyper-V host
 

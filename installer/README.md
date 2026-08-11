@@ -229,8 +229,10 @@ terraform apply
 ```
 
 This requires an **org token** (admin scope) — a different token from the
-ingest token used in step 5/8. See `docs/deployment-guide.md` for the full
-test/verify plan after this step.
+ingest token used in step 5/8. See `docs/capabilities-and-metrics.md`'s
+"What's already visualized" section for the full chart/detector breakdown
+this provisions, and `docs/deployment-guide.md` for the full test/verify
+plan after this step.
 
 ## 10. Optional: Tier 1.5 pilot enablement (guest filesystem/memory metrics)
 
