@@ -31,11 +31,7 @@ this counter, so `vm_memory_pressure_high` in `detectors.tf` silently never
 fires for them — not a bug, a coverage gap.
 
 **Status: implemented in `hyperv-host-companion`, disabled by default.**
-Tier 2's `hostmetrics/memory` scraper would close this for opted-in
-static-memory VMs, but this customer has ruled out deploying any collector
-inside guest VMs, opt-in or otherwise — Tier 2 is not part of the proposed
-solution (see gap #4 and `guest-vm-config.yaml`'s header comment). Tier 1.5
-(`internal/guestprobe.Sample`) now also queries `Win32_OperatingSystem`
+Tier 1.5 (`internal/guestprobe.Sample`) queries `Win32_OperatingSystem`
 inside the guest (`TotalVisibleMemorySize`/`FreePhysicalMemory`, both in
 KB) in the same `Invoke-Command` session used for gap #4, and exports
 `vm.guest.memory.used_percent`. This is the guest's own OS-reported memory
@@ -74,11 +70,7 @@ Confirmed architectural limitation: `host.disk.free_space` / Hyper-V's
 *files*, not what's actually used inside the guest's filesystem.
 
 **Status: implemented in `hyperv-host-companion`, disabled by default.**
-Tier 2 (`guest-vm-config.yaml`) would also close this, but this customer
-has explicitly ruled out deploying any collector inside guest VMs — not
-just fleet-wide, opt-in included — so Tier 2 is kept for reference only and
-is **not** part of the solution proposed to this customer. Tier 1.5
-(PowerShell Direct guest probe, `internal/guestprobe`) is now real code: a
+Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`) is real code: a
 third ticker in `cmd/host-companion/main.go` calls `Invoke-Command -VMId`
 over VMBus for an opt-in `guest_probe.vm_include` subset and exports
 `vm.guest.filesystem.used_percent`. It ships with `guest_probe.enabled:
