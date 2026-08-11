@@ -52,8 +52,9 @@ collection mechanism with a distinct blast radius — see
               │ network egress or agent required     │                │
               └──────────────────────────────────────┘                │
               ┌──────────────────────────────────────┐                │
-              │ Tier 1.6 — Windows Event Forwarding   │                │
-              │ centralizes guest/host event logs     │                │
+              │ Future idea, not gap-driven, not built │                │
+              │ Windows Event Forwarding — would       │                │
+              │ centralize guest/host event logs       │                │
               │ without per-VM collector deployment    │                │
               └──────────────────────────────────────┘                │
 ┌────────────────────────────────────────────────────────────────────┐
@@ -72,8 +73,13 @@ collection mechanism with a distinct blast radius — see
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
 | 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
-| 1.6 | Windows Event Forwarding | Centralized collector receiving forwarded events | Guest/host event visibility without per-VM collector deployment |
 | 2 | Splunk OTel Collector, `guest-vm-config.yaml` | **Ruled out for this customer** — not opt-in, not fleet-wide, not deployed at all | Kept for reference only; does not close #2/#4 for this engagement |
+
+**Future idea, not gap-driven, not built:** Windows Event Forwarding — a
+native Windows mechanism that could centralize event-log visibility (host +
+guest) without per-VM collector deployment. No code, no config in this repo.
+Not part of this proposal, and no customer-POC gap requires it — unlike
+every numbered tier above, it isn't tied to a specific finding.
 
 ## Resource attribute strategy
 

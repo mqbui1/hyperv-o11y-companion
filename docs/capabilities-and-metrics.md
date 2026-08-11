@@ -151,9 +151,10 @@ truth for your environment.
 - **Tier 2** is the right choice if guest-level visibility beyond
   filesystem/memory (process state, application metrics) is required and
   the extra per-VM billed-host cost is acceptable.
-- **Tier 1.6** (Windows Event Forwarding, config-only, no new metrics) is
-  additive to any of the above — centralizes event-log visibility without
-  per-VM collector deployment.
+- **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
+  native Windows mechanism that could centralize event-log visibility (host +
+  guest) without per-VM collector deployment. Not part of this proposal; no
+  customer-POC gap requires it.
 
 See `docs/architecture.md` for the full tier diagram and resource-attribute
 strategy, and `docs/deployment-guide.md` for install/configure steps
