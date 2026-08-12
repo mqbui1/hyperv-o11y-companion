@@ -94,6 +94,51 @@ type GuestProbeConfig struct {
 	CredentialName string        `yaml:"credential_name"`
 }
 
+// GuestFSProbeConfig configures Tier 1.6 (VHDX/GPT/filesystem-superblock
+// host-side probe, see internal/guestfs). Unlike GuestProbeConfig (Tier
+// 1.5), this is Windows- and Linux-guest capable and never runs anything
+// inside the guest — it is still opt-in and disabled by default, gated on
+// the same kind of validation as Tier 1.5 rather than a fleet-wide
+// default.
+type GuestFSProbeConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// VMInclude is an opt-in curated subset by VM name (filepath.Match
+	// glob patterns, matched in cmd/guestfs-probe/main.go). Empty means
+	// no VMs are probed even if Enabled is true.
+	VMInclude      []string      `yaml:"vm_include"`
+	SampleInterval time.Duration `yaml:"sample_interval"`
+	SampleTimeout  time.Duration `yaml:"sample_timeout"`
+}
+
+// GuestFSProbeServiceConfig is cmd/guestfs-probe's config schema
+// (config/guestfs-probe.yaml) — a fully independent Windows Service from
+// cmd/host-companion, so a bug here cannot affect Tier 1/1.5.
+type GuestFSProbeServiceConfig struct {
+	OTLP    OTLPConfig         `yaml:"otlp"`
+	DiskMap DiskMapConfig      `yaml:"disk_map"`
+	GuestFS GuestFSProbeConfig `yaml:"guest_fs_probe"`
+}
+
+func LoadGuestFSProbe(path string) (*GuestFSProbeServiceConfig, error) {
+	var c GuestFSProbeServiceConfig
+	if err := loadYAML(path, &c); err != nil {
+		return nil, err
+	}
+	if c.DiskMap.BuildInterval == 0 {
+		c.DiskMap.BuildInterval = time.Hour
+	}
+	if c.DiskMap.BuildTimeout == 0 {
+		c.DiskMap.BuildTimeout = 300 * time.Second
+	}
+	if c.GuestFS.SampleInterval == 0 {
+		c.GuestFS.SampleInterval = 5 * time.Minute
+	}
+	if c.GuestFS.SampleTimeout == 0 {
+		c.GuestFS.SampleTimeout = 30 * time.Second
+	}
+	return &c, nil
+}
+
 // HostCompanionConfig is cmd/host-companion's config schema
 // (config/host-companion.yaml).
 type HostCompanionConfig struct {

@@ -1,0 +1,23 @@
+# Example config for the guestfs-probe service.
+# Install path: C:\Program Files\Splunk\HyperVO11yCompanion\config\guestfs-probe.yaml
+# Deployed one instance per physical Hyper-V host, as a Windows Service fully
+# independent from host-companion — a bug here cannot affect Tier 1/1.5.
+
+otlp:
+  endpoint: "http://localhost:4318"  # host-local Splunk OTel Collector; no credential needed here
+  insecure: true
+
+disk_map:
+  build_interval: 1h
+  build_timeout: 300s   # on timeout, keep the previous in-memory map
+
+guest_fs_probe:   # Tier 1.6 — VHDX/GPT/filesystem-superblock host-side read, closes gap #4 for Linux (and Windows) guests with zero in-guest footprint
+  enabled: false   # leave false until validated against a real Hyper-V host (only synthetic VHDX fixtures tested so far)
+  vm_include: []   # opt-in curated subset by VM name, e.g. ["RHEL*"]; empty = no VMs probed even if enabled
+  sample_interval: 5m   # reading a VHDX's BAT/superblock off disk is I/O, not free; sample less often
+  sample_timeout: 30s   # per-VM timeout; one VM's read must not block the others
+
+# v1 scope: fixed/dynamic VHDX only (no differencing disks/checkpoints), GPT
+# partition tables only (no legacy MBR), XFS root filesystem only (no ext4),
+# and no LVM. Unsupported VMs are logged and skipped, not treated as fatal.
+# See internal/guestfs for details.
