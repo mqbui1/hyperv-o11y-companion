@@ -31,18 +31,38 @@ during a real customer POC.
                                         ▲
               ┌─────────────────────────┴──────────────────────┐
               │ Tier 1.5 — PowerShell Direct guest probe        │
-              │ (implemented, disabled by default pending       │
+              │ (cmd/host-companion, internal/guestprobe)       │
+              │ Windows guests only — gaps #2 and #4            │
+              │ implemented, disabled by default pending         │
               │ go/no-go — see docs/phase3-guest-probe-plan.md) │
+              └──────────────────────────────────────────────────┘
+                                        ▲
+              ┌─────────────────────────┴──────────────────────┐
+              │ Tier 1.6 — VHDX host-side read                  │
+              │ (cmd/guestfs-probe, internal/guestfs)           │
+              │ Windows AND Linux guests — gap #4 only          │
+              │ zero guest interaction of any kind (not even    │
+              │ a one-off command); own independent Windows     │
+              │ Service, so it can't affect Tier 1/1.5.         │
+              │ implemented, validated end-to-end against a     │
+              │ real Linux guest, disabled by default pending   │
+              │ fleet pilot — v1 supports GPT+XFS guests only   │
               └──────────────────────────────────────────────────┘
 ```
 
 Tier 1 is cheap (no extra billable hosts) but can only see
-hypervisor-visible resource allocation — not real guest-OS internals. Tier
-1.5 (PowerShell Direct guest probe — implemented in `internal/guestprobe`,
-mechanism-validated against a real nested-Hyper-V guest, ships
-`guest_probe.enabled: false` pending fleet-wide go/no-go) closes that gap
-for gaps #2 and #4 without deploying anything inside the guest — see
-`docs/architecture.md`.
+hypervisor-visible resource allocation — not real guest-OS internals.
+Gap #4 (guest filesystem used %) has two independent closing mechanisms,
+each its own Windows Service, either/both/neither of which a customer can
+enable without affecting the other: Tier 1.5 (PowerShell Direct guest
+probe — implemented in `internal/guestprobe`, mechanism-validated against
+a real nested-Hyper-V guest, ships `guest_probe.enabled: false` pending
+fleet-wide go/no-go, **Windows guests only**) also covers gap #2 (guest
+memory); Tier 1.6 (VHDX host-side read — implemented in `internal/guestfs`
+as its own service, `cmd/guestfs-probe`, validated end-to-end against a
+real Rocky Linux 9 guest, ships `guest_fs_probe.enabled: false` pending a
+fleet pilot, **Windows and Linux guests**) never touches the guest at all —
+see `docs/architecture.md`.
 
 **The load-bearing design decision** is the resource-attribute strategy:
 every dashboard/detector filters on `host.type` (`hypervisor` vs.
@@ -57,7 +77,7 @@ exactly why gaps #3, #6, and #7 all live in this layer.
 | 1 | No power-state/availability monitoring | **Solved** — Perfmon can't distinguish "VM off" from "scrape missed," so this is deliberately Tier 0 (SCVMM), not Perfmon: `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) polls SCVMM directly and emits `hyperv_vm_up`/`hyperv_host_up`, tagged with the same `vm.name`/`host.name` resource attrs as everything else here. |
 | 2 | Static-memory VMs invisible to memory pressure | **Solved (pending fleet-wide validation).** Tier 1's `Hyper-V Dynamic Memory VM` counter simply doesn't exist for these VMs. Tier 1.5 (`internal/guestprobe`) queries the guest's own `Win32_OperatingSystem` over PowerShell Direct instead, exporting `vm.guest.memory.used_percent` — mechanism-validated against a real nested-Hyper-V guest; ships `guest_probe.enabled: false` pending fleet-wide go/no-go. |
 | 3 | ~20% of VHD instances unattributed | `transform/vm_name`'s storage-path extraction rule handles the common case; pass-through/ISO disks have no reliable signal in the raw instance string, so this is an accepted, scoped gap (storage-metric-specific, not fleet-wide) rather than a false fix. |
-| 4 | No guest filesystem used % | **Solved (pending fleet-wide validation).** Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`) closes this — implemented, mechanism-validated against a real nested-Hyper-V guest, exporting `vm.guest.filesystem.used_percent`; ships `guest_probe.enabled: false` pending fleet-wide go/no-go. |
+| 4 | No guest filesystem used % | **Solved — two independent mechanisms.** Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`, **Windows guests only**) — implemented, mechanism-validated against a real nested-Hyper-V guest, exporting `vm.guest.filesystem.used_percent`; ships `guest_probe.enabled: false` pending fleet-wide go/no-go. Tier 1.6 (VHDX host-side read, `internal/guestfs`/`cmd/guestfs-probe`, **Windows and Linux guests**, zero guest interaction) — implemented and validated end-to-end against a real Rocky Linux 9 guest, exporting the same metric name; ships `guest_fs_probe.enabled: false` pending a fleet pilot; v1 supports GPT+XFS guests only. |
 | 5 | Disk latency unit unconfirmed | Not an architecture fix — a **safety gate**: the metric description flags it, and `vm_storage_latency_high` in `detectors.tf` ships `disabled = true` until validated (see `nested-hyperv-azure-test-plan.md`, step 4). |
 | 6 | Malformed `vm.name` from Perfmon `#N` duplicate suffixing | Final statement in `transform/vm_name` strips `#[0-9]+$`, run **last** so it applies regardless of which object type's instance string it came from. Validated both synthetically (`otel-collector/test/`) and via the nested-Hyper-V test plan against real Windows behavior. |
 | 7 | ~20% of VMs missing network series | Flagged directly on the `windowsperfcounters/vm` network receiver block — architecture deliberately does **not** build a detector on `vm.net.bytes_total` until this is spot-checked, to avoid false positives on VMs with no vNIC. |
