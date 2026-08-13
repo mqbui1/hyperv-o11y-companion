@@ -4,14 +4,16 @@ Field-delivered Hyper-V monitoring solution for **Splunk Observability
 Cloud**, which has no native Hyper-V integration. Consolidates two things
 that used to live in separate repos/scripts into one place:
 
-1. **Two Windows Services** (`cmd/`) — a consolidated replacement for the
+1. **Three Windows Services** (`cmd/`) — a consolidated replacement for the
    customer's four independently-scheduled PowerShell script pairs
    (`collect-scvmm-metrics.ps1` / `run-collect-scvmm-metrics.ps1`,
    `enrich-vm-guest-os.ps1` / `run-enrich-vm-guest-os.ps1`,
    `build-hyperv-vm-disk-map.ps1` / `collect-hyperv-vm-disk.ps1`), plus the
-   the Tier 1.5 PowerShell Direct guest probe (implemented, disabled by
-   default pending go/no-go — see below). Zero Windows Task
-   Scheduler entries.
+   Tier 1.5 PowerShell Direct guest probe (Windows guests, implemented,
+   disabled by default pending go/no-go — see below) and Tier 1.6
+   (`cmd/guestfs-probe`, Windows AND Linux guests, VHDX host-side read,
+   zero guest interaction — see below). Zero Windows Task Scheduler
+   entries.
 2. **OTel Collector configs + Terraform dashboards/detectors** (`otel-collector/`,
    `terraform/`) — the host-side (Tier 1) collection pipeline and the
    dashboards/detectors provisioned from it. Formerly the standalone
@@ -25,16 +27,35 @@ implemented but not yet live-tested end-to-end, 1 unconfirmed against the
 original POC's own cluster — see "Known gaps" below).
 
 **Important customer constraint:** this customer has explicitly ruled out
-deploying any collector inside guest VMs, opt-in or otherwise. Gaps #2
-(static-memory VM memory pressure) and #4 (guest filesystem used %) are
-solved via Tier 1.5 (PowerShell Direct
-guest probe — implemented in `internal/guestprobe`, wired into
-`host-companion`, mechanism-validated on a real nested-Hyper-V test), which
-requires nothing to be deployed inside the guest. It ships with
+deploying any collector inside guest VMs, opt-in or otherwise — confirmed to
+apply to every guest OS, including their mix of RHEL 7/8/9 Linux guests,
+not just Windows. Gaps #2 (static-memory VM memory pressure) and #4 (guest
+filesystem used %) are solved via Tier 1.5 (PowerShell Direct guest
+probe — implemented in `internal/guestprobe`, wired into `host-companion`,
+mechanism-validated on a real nested-Hyper-V test, **Windows guests only**),
+which requires nothing to be deployed inside the guest. It ships with
 `guest_probe.enabled: false` and stays that way pending fleet-wide go/no-go
 validation (session load at scale, real-fleet Integration Services
 coverage, shared-credential security review — see
 `docs/phase3-guest-probe-plan.md`).
+
+Gap #4 also has a **Linux-capable** solution: Tier 1.6 (`cmd/guestfs-probe`,
+`internal/guestfs`) reads the guest's filesystem usage directly out of its
+VHDX file on the host — GPT partition table + filesystem superblock parsing,
+zero guest interaction of any kind (not even a one-off command). A fully
+independent Windows Service from `host-companion`, so it can't affect
+Tier 1/1.5. v1 supports GPT-partitioned VHDX disks with an XFS root
+filesystem (RHEL 7/8/9's default) only; **validated end-to-end against a
+real, running Rocky Linux 9 guest** on nested-Hyper-V test infrastructure —
+this real-hardware pass found and fixed a genuine defect (root-partition
+misidentification on a standard non-LVM layout; see
+`docs/known-gaps-remediation.md` gap #4). Still ships with
+`guest_fs_probe.enabled: false` by default pending a fleet pilot. Gap #2
+(guest memory) has no
+guestfs-probe equivalent, but has its own zero-code fix for any guest OS:
+enabling Hyper-V Dynamic Memory with `Min = Max = Startup` activates the
+existing Tier 1 `vm.memory.current_pressure` counter — see
+`docs/known-gaps-remediation.md` gap #2.
 
 See `docs/capabilities-and-metrics.md` for the full generic (customer-agnostic)
 metrics catalog and what's already visualized in Splunk Observability Cloud
@@ -46,10 +67,11 @@ out of the box, organized by tier.
 cmd/                             Windows Service binaries
   scvmm-poller/                  Tier 0 — gaps #1, #8
   host-companion/                Tier 1 companion — gap #3, #5
+  guestfs-probe/                 Tier 1.6 — gap #4, Linux-capable, zero guest footprint
 internal/                        Shared Go packages (config, creds, hyperv,
-                                  diskattr, guestos, metadata, metricsexport,
-                                  scvmm, winsvc)
-installer/                       WiX v4 MSI installer (both services)
+                                  diskattr, guestos, guestfs, guestprobe,
+                                  metadata, metricsexport, scvmm, winsvc)
+installer/                       WiX v4 MSI installer (all three services)
 otel-collector/
   hypervisor-host-config.yaml    Tier 1 — deploy on every Hyper-V host
                                   (gaps #6, #7, #9, #10)
@@ -70,8 +92,8 @@ docs/
   deployment-guide.md            Delivery, install, configure, test/verify
   parity-testing-and-cutover.md  Shadow -> diff -> cutover plan (old scripts
                                   -> new services)
-  phase3-guest-probe-plan.md     Tier 1.5 (implemented, gap #4; disabled by
-                                  default pending go/no-go)
+  phase3-guest-probe-plan.md     Tier 1.5 (implemented, gap #4, Windows
+                                  guests; disabled by default pending go/no-go)
   nested-hyperv-azure-test-plan.md  Real-hardware validation plan (Azure)
 ```
 
@@ -110,9 +132,10 @@ Windows MSI, config swap, env vars, service restart).
    (Tier 1) — install the MSI, replace its config with
    `otel-collector/hypervisor-host-config.yaml`, set
    `SPLUNK_ACCESS_TOKEN`/`SPLUNK_REALM`, restart the service.
-3. **Install the two Windows Services** (`scvmm-poller` on the SCVMM
-   console box, `host-companion` on every Hyper-V host) via the MSI in
-   `installer/` — see "Services" below.
+3. **Install the Windows Services** (`scvmm-poller` on the SCVMM
+   console box, `host-companion` on every Hyper-V host, and optionally
+   `guestfs-probe` alongside `host-companion` for Linux guest filesystem
+   visibility) via the MSI in `installer/` — see "Services" below.
 
 Full step-by-step instructions, credential setup, and a test/verify
 checklist: `docs/deployment-guide.md`.
@@ -122,9 +145,9 @@ checklist: `docs/deployment-guide.md`.
 | # | Gap | Status |
 |---|---|---|
 | 1 | No power-state/availability monitoring | Solved (implemented, not yet live-tested end-to-end) — `hyperv-scvmm-poller` |
-| 2 | Static-memory VMs invisible to memory pressure | Solved (pending fleet-wide validation) — Tier 1.5, mechanism-validated on a real nested-Hyper-V test; ships `disabled` until fleet go/no-go |
+| 2 | Static-memory VMs invisible to memory pressure | Solved (pending fleet-wide validation, Windows guests) — Tier 1.5, mechanism-validated on a real nested-Hyper-V test; ships `disabled` until fleet go/no-go. Zero-code alternative for any guest OS: Dynamic Memory `Min=Max=Startup` |
 | 3 | ~20% of VHD instances unattributed | Solved (accepted residual) — `hyperv-host-companion` |
-| 4 | No guest filesystem used % visible | Solved (pending fleet-wide validation) — Tier 1.5, mechanism-validated on a real nested-Hyper-V test; ships `disabled` until fleet go/no-go |
+| 4 | No guest filesystem used % visible | Solved — Tier 1.5 (Windows guests, pending fleet-wide validation) or Tier 1.6 (Windows/Linux, VHDX host-side read, validated end-to-end against a real Linux guest); both ship `disabled` pending fleet pilot |
 | 5 | Disk latency unit unconfirmed | Solved — empirically verified, ×1000 scale correction |
 | 6 | Malformed `vm.name` from Perfmon `#N` suffixing | Solved — `otel-collector/hypervisor-host-config.yaml` |
 | 7 | ~20% of VMs missing network series | Solved for a from-scratch deployment — wrong counter name fixed; unconfirmed whether this fully resolves the original POC's own cluster (see gap #7's "Still open" note) |
@@ -140,9 +163,10 @@ See `docs/known-gaps-remediation.md` for the full per-gap writeup.
 |---|---|---|---|
 | `scvmm-poller` | Central SCVMM console box (e.g. `SCVMM-CONSOLE-01`) | `collect-scvmm-metrics.ps1` + `enrich-vm-guest-os.ps1` and their wrappers/scheduled tasks | **Phase 1 — scaffolded** |
 | `host-companion` | Every Hyper-V host, alongside the Splunk OTel Collector | `build-hyperv-vm-disk-map.ps1` + `collect-hyperv-vm-disk.ps1` (Phase 2, scaffolded here), and the PowerShell Direct guest probe (Phase 3, implemented in `internal/guestprobe`, disabled by default — see `docs/phase3-guest-probe-plan.md`) | **Phase 2 — scaffolded; Phase 3 — implemented, disabled pending go/no-go** |
+| `guestfs-probe` | Every Hyper-V host with Linux (or Windows) guests needing filesystem usage, alongside the Splunk OTel Collector | Nothing pre-existing — new Tier 1.6 mechanism (`internal/guestfs`), a fully independent service from `host-companion` | **Implemented and validated end-to-end against a real Linux guest; disabled by default pending fleet pilot** |
 
-Both binaries are installed as native Windows Services (`golang.org/x/sys/windows/svc`)
-via an MSI (see `installer/`, WiX v4 source with a two-feature scaffold — one
+All three binaries are installed as native Windows Services (`golang.org/x/sys/windows/svc`)
+via an MSI (see `installer/`, WiX v4 source with a three-feature scaffold — one
 feature per service, so the same MSI installs the right thing on the console
 box vs. every Hyper-V host), so they start on boot, restart on failure, and
 show up in `services.msc` — no Task Scheduler, no DPAPI secret files on disk.
@@ -174,6 +198,9 @@ host directly (`Get-VM`/`Get-VMHardDiskDrive`/`Get-Counter`, no remoting) and
 exports to the host-local Splunk OTel Collector over plain OTLP, which
 already holds the upstream Splunk credential via its own `signalfx`
 exporter config.
+
+`guestfs-probe` also needs no credentials at all, ever — it never talks to
+the guest, only reads the VHDX file directly on the host.
 
 ## Phase 2 — `host-companion` disk metrics (gap #3)
 

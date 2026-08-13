@@ -24,13 +24,13 @@ that live-test pass is the next priority for this service. This repo still
 does not reimplement SCVMM's own PowerShell cmdlets; `internal/scvmm` still
 shells out to `Get-SCVMHost`/`Get-SCVirtualMachine` under the hood.
 
-## 2. Static-memory VMs invisible to memory-pressure alerting — SOLVED (pending fleet-wide validation)
+## 2. Static-memory VMs invisible to memory-pressure alerting — SOLVED (pending fleet-wide validation; Windows guests via Tier 1.5, or zero-code fix for any guest OS)
 By design: "Current Pressure" (`Hyper-V Dynamic Memory VM` object) only
 exists for VMs with Dynamic Memory enabled. Static-memory VMs never populate
 this counter, so `vm_memory_pressure_high` in `detectors.tf` silently never
 fires for them — not a bug, a coverage gap.
 
-**Status: implemented in `hyperv-host-companion`, disabled by default.**
+**Status: implemented in `hyperv-host-companion`, disabled by default (Windows guests).**
 Tier 1.5 (`internal/guestprobe.Sample`) queries `Win32_OperatingSystem`
 inside the guest (`TotalVisibleMemorySize`/`FreePhysicalMemory`, both in
 KB) in the same `Invoke-Command` session used for gap #4, and exports
@@ -41,7 +41,24 @@ validated end-to-end against a real nested-Hyper-V guest (see
 `docs/phase3-guest-probe-plan.md`). Same caveat as gap #4: ships with
 `guest_probe.enabled: false`, and should stay off until fleet-wide go/no-go
 validation (session latency/load at scale, real-fleet Integration Services
-coverage, shared-credential security review) is complete.
+coverage, shared-credential security review) is complete. PowerShell Direct
+is Windows-guest-only — there is no equivalent VMBus-based remote-exec
+mechanism for Linux guests, so this specific path does not cover them.
+
+**Zero-code alternative for any guest OS (Windows or Linux): enable Hyper-V
+Dynamic Memory with `Minimum = Maximum = Startup RAM`.** This activates the
+existing Tier 1 `vm.memory.current_pressure` counter (`Hyper-V Dynamic
+Memory VM` object) for that VM without Hyper-V actually ballooning memory
+away from it — Dynamic Memory's balloon driver (`hv_balloon`) is supported
+by both Windows and Linux Integration Services, and Hyper-V populates
+"Current Pressure" for any VM with Dynamic Memory *enabled*, independent of
+whether Min/Max allow it to actually resize. This requires no new code, no
+guest interaction, and no fleet-wide validation beyond the existing Tier 1
+pipeline — it's a per-VM Hyper-V settings change (`Set-VMMemory -VMName X
+-DynamicMemoryEnabled $true -MinimumBytes $sameAsStartup -MaximumBytes
+$sameAsStartup`, or the Settings UI), recommended as the preferred fix for
+customers who want memory-pressure coverage without a Tier 1.5 pilot at
+all, or for Linux guests where Tier 1.5 isn't an option.
 
 ## 3. ~19–23% of VHD instances unattributed (fleet match rate 77–81%) — SOLVED
 `Get-VMHardDiskDrive` (used by the customer's `build-hyperv-vm-disk-map.ps1`)
@@ -64,15 +81,20 @@ defect. This logic is being ported into `hyperv-host-companion`
 map shared between a builder and sampler goroutine, replacing the two
 scripts' JSON-file handoff.
 
-## 4. No guest filesystem used % visible — SOLVED (pending fleet-wide validation)
+## 4. No guest filesystem used % visible — SOLVED (Mechanism A pending fleet-wide validation; Mechanism B real-hardware validated, pending fleet pilot)
 Confirmed architectural limitation: `host.disk.free_space` / Hyper-V's
 `Hyper-V Virtual Storage Device` counters describe host-visible virtual disk
-*files*, not what's actually used inside the guest's filesystem.
+*files*, not what's actually used inside the guest's filesystem. This
+customer confirmed on a follow-up call that they run a mix of RHEL 7/8/9
+guests, and that their no-in-guest-collector policy applies to every guest
+OS, not just Windows — ruling out any fix that requires guest-resident code,
+even a small one-off script.
 
-**Status: implemented in `hyperv-host-companion`, disabled by default.**
-Tier 1.5 (PowerShell Direct guest probe, `internal/guestprobe`) is real code: a
-third ticker in `cmd/host-companion/main.go` calls `Invoke-Command -VMId`
-over VMBus for an opt-in `guest_probe.vm_include` subset and exports
+**Mechanism A — Tier 1.5, Windows guests only: implemented in
+`hyperv-host-companion`, disabled by default.** PowerShell Direct guest
+probe (`internal/guestprobe`) is real code: a third ticker in
+`cmd/host-companion/main.go` calls `Invoke-Command -VMId` over VMBus for an
+opt-in `guest_probe.vm_include` subset and exports
 `vm.guest.filesystem.used_percent`. It ships with `guest_probe.enabled:
 false` and should stay off until the go/no-go criteria in
 `docs/phase3-guest-probe-plan.md` are validated against the real fleet
@@ -80,7 +102,44 @@ false` and should stay off until the go/no-go criteria in
 whether a single shared guest-local credential is acceptable). Mechanism
 validated end-to-end against a real nested-Hyper-V guest (16.30% filesystem
 used, matched hand-computed expected value) — see
-`docs/phase3-guest-probe-plan.md`.
+`docs/phase3-guest-probe-plan.md`. PowerShell Direct has no Linux
+equivalent — Hyper-V's Linux Integration Services expose KVP/VSS/FCopy
+daemons only, none of which support arbitrary remote command execution —
+so this mechanism cannot be extended to RHEL guests.
+
+**Mechanism B — Tier 1.6, Windows AND Linux guests, zero in-guest footprint:
+implemented as its own Windows Service, disabled by default.** Rather than
+running anything inside the guest, `cmd/guestfs-probe`
+(`internal/guestfs`) opens the guest's own VHDX file read-only directly on
+the host and parses it as a byte stream: the VHDX container format (Block
+Allocation Table lookup to resolve logical disk offsets to physical file
+offsets), then a GPT partition table to find the root filesystem partition,
+then that filesystem's own on-disk superblock to read total/free blocks.
+v1 supports GPT-partitioned (not legacy MBR — moot for Generation 2 VMs,
+which require GPT), non-differencing/non-checkpointed VHDX disks, with an
+XFS root filesystem (RHEL 7/8/9's default) — `ext4` and LVM-on-top-of-GPT
+are explicitly out of scope for v1 (`guestfs.ErrNotXFS`/`guestfs.ErrLVM`)
+and log-and-skip rather than error the whole probe cycle. This is a
+deliberately separate binary/Windows Service from `hyperv-host-companion`,
+not a third mechanism bolted onto it, so a bug in this new binary-parsing
+code cannot affect Tier 1/1.5.
+
+**Real-hardware validated (nested Hyper-V, Azure) — see "Additional
+findings" below for the defect found and fixed during this pass.**
+Previously validated only against synthetic, spec-conformant VHDX fixtures
+(`internal/guestfs/vhdx_test.go`); this round installed a real Rocky Linux
+9 guest with its default (non-LVM, XFS) layout and ran `guestfs-probe`'s
+parsing logic directly against that guest's live VHDX file (no guest
+shutdown required), cross-checked against the VHDX's own allocated-size
+metadata. Still ships `guest_fs_probe.enabled: false` by default pending a
+supervised fleet pilot — a single real guest confirms the mechanism works,
+not that it holds up across the fleet's full variety of disk layouts.
+
+Both mechanisms export the same metric name
+(`vm.guest.filesystem.used_percent`) so downstream config (the collector
+pipeline below, the Terraform detector) needs zero changes regardless of
+which one (or both) a customer enables; Tier 1.6's samples simply carry no
+`drive_letter` attribute (root filesystem only, not a per-volume breakdown).
 
 `otel-collector/hypervisor-host-config.yaml` now has an `otlp` receiver and
 a `metrics/vm_companion` pipeline to receive and correctly tag
@@ -213,6 +272,31 @@ filters are environment-agnostic. No repo change needed; just point
 same config out to the remaining hosts.
 
 ## Additional findings from real-hardware validation (nested Hyper-V, Azure)
+
+**Guestfs root-partition misidentification (Tier 1.6, gap #4) — found and
+fixed.** A real, installed Rocky Linux 9.8 guest (default non-LVM Anaconda
+layout: EFI System Partition, `/boot`, `/`) was used to validate
+`internal/guestfs.FindRootFilesystem` end-to-end for the first time against
+a genuine multi-partition GPT disk, rather than the single-partition
+synthetic fixture the unit tests use. `FindRootFilesystem` originally
+returned the *first* GPT partition typed "Linux filesystem" — but a
+standard non-LVM Anaconda layout types **both** `/boot` and `/` that way,
+with the small, fixed-size `/boot` (~1GB) listed *before* the much larger
+`/` (gets the rest of the disk). So the original logic was silently
+reporting `/boot`'s usage (40.17% on the test guest) instead of root's
+actual usage (10.06%) — confirmed independently via the VHDX's own
+allocated-size metadata (`Get-VHD`'s `FileSize`), which matched the sum of
+`/boot`'s and root's used bytes, not `/boot`'s alone. **Fix:** changed
+`FindRootFilesystem` to pick the *largest* plain-Linux-typed partition
+instead of the first — root is reliably far larger than `/boot` on any real
+install — and added a permanent regression test
+(`TestFindRootFilesystem_PicksLargestOverFirst`) covering this layout.
+Re-validated against the same live guest post-fix: correct 10.06% reported.
+**Lesson, same theme as the gap #6 findings below: single-partition
+synthetic fixtures cannot catch a defect that only manifests with a real,
+multi-partition disk layout — any future change to partition-selection
+logic in `internal/guestfs` should be re-validated against a real installed
+guest, not synthetic fixtures alone.**
 
 Two corrections/refinements to gap #6, found by running
 `docs/nested-hyperv-azure-test-plan.md` against a real Windows Server 2025

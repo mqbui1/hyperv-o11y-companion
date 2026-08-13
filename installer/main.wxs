@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  WiX v4 source for the hyperv-o11y-companion MSI. Two independently
+  WiX v4 source for the hyperv-o11y-companion MSI. Three independently
   selectable features so the same MSI can be run on either box:
 
     - ScvmmPollerFeature: install on the central SCVMM console box only
       (e.g. SCVMM-CONSOLE-01).
     - HostCompanionFeature: install on every physical Hyper-V host.
+    - GuestFSProbeFeature: install on every physical Hyper-V host running
+      Linux guests (Tier 1.6) — a separate service/process from
+      HostCompanionFeature by design, so it can be added, removed, or
+      crash without affecting Tier 1/1.5.
 
   Build with `wix build` (WiX v4 toolset) — see build.ps1. Regenerate all
   GUIDs below (Package/@UpgradeCode and every Component/@Guid) before first
@@ -39,6 +43,12 @@
       <ComponentRef Id="HostCompanionBinary" />
       <ComponentRef Id="HostCompanionConfig" />
       <ComponentRef Id="HostCompanionService" />
+    </Feature>
+
+    <Feature Id="GuestFSProbeFeature" Title="Guest Filesystem Probe Service (Tier 1.6)" Description="Install on every physical Hyper-V host with Linux (or Windows) guests needing filesystem usage — reads VHDX files directly on the host, zero guest footprint." Level="1">
+      <ComponentRef Id="GuestFSProbeBinary" />
+      <ComponentRef Id="GuestFSProbeConfig" />
+      <ComponentRef Id="GuestFSProbeService" />
     </Feature>
 
     <!-- scvmm-poller -->
@@ -91,6 +101,33 @@
                        Arguments="-config &quot;[CONFIGFOLDER]host-companion.yaml&quot;" />
       <ServiceControl Id="HostCompanionServiceControl"
                        Name="hyperv-host-companion"
+                       Start="install"
+                       Stop="both"
+                       Remove="uninstall"
+                       Wait="yes" />
+    </Component>
+
+    <!-- guestfs-probe (Tier 1.6) -->
+    <Component Id="GuestFSProbeBinary" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a07">
+      <File Id="GuestFSProbeExe" Source="staging\bin\guestfs-probe.exe" KeyPath="yes" />
+    </Component>
+
+    <Component Id="GuestFSProbeConfig" Directory="CONFIGFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a08">
+      <File Id="GuestFSProbeConfigFile" Source="staging\config\guestfs-probe.yaml" KeyPath="yes" NeverOverwrite="yes" />
+    </Component>
+
+    <Component Id="GuestFSProbeService" Directory="BINFOLDER" Guid="c1a1e6c2-0a1a-4d1a-9a1a-1a1a1a1a1a09">
+      <File Id="GuestFSProbeServiceFileRef" Source="staging\bin\guestfs-probe.exe" KeyPath="yes" />
+      <ServiceInstall Id="GuestFSProbeServiceInstall"
+                       Name="hyperv-guestfs-probe"
+                       DisplayName="Splunk Hyper-V Guest Filesystem Probe"
+                       Description="Reads guest filesystem usage directly out of the VHDX on the host (Tier 1.6) — Linux- and Windows-guest capable, zero in-guest footprint."
+                       Start="auto"
+                       Type="ownProcess"
+                       ErrorControl="normal"
+                       Arguments="-config &quot;[CONFIGFOLDER]guestfs-probe.yaml&quot;" />
+      <ServiceControl Id="GuestFSProbeServiceControl"
+                       Name="hyperv-guestfs-probe"
                        Start="install"
                        Stop="both"
                        Remove="uninstall"

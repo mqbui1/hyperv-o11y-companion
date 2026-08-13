@@ -68,7 +68,7 @@ alone can't attribute (DVD/ISO/pass-through disks).
 | `vm.disk.read_bytes_sec` | By/s | VM virtual disk read throughput, disk-map-attributed |
 | `vm.disk.write_bytes_sec` | By/s | VM virtual disk write throughput, disk-map-attributed |
 
-### Tier 1.5 — PowerShell Direct guest probe (optional, `internal/guestprobe`)
+### Tier 1.5 — PowerShell Direct guest probe (optional, `internal/guestprobe`, Windows guests only)
 
 Reads inside the guest OS over VMBus, with no guest network path, no guest
 firewall rule, and no agent process running inside the guest. Ships
@@ -79,6 +79,24 @@ go/no-go validation — see `docs/phase3-guest-probe-plan.md`.
 |---|---|---|
 | `vm.guest.filesystem.used_percent` | % | Guest fixed-volume used space (per drive letter) — actual guest filesystem usage, not host-visible virtual disk file size |
 | `vm.guest.memory.used_percent` | % | Guest's own OS-reported memory usage — works for **static-memory VMs**, unlike `vm.memory.current_pressure` above which only exists for Dynamic Memory VMs |
+
+### Tier 1.6 — VHDX host-side read (optional, `internal/guestfs`, `cmd/guestfs-probe`, Windows AND Linux guests)
+
+Opens the guest's own VHDX file read-only directly on the host and parses
+its GPT partition table + root filesystem superblock — zero guest
+interaction of any kind, not even a one-off command. A fully independent
+Windows Service from `hyperv-host-companion`. Validated end-to-end against
+a real, running Rocky Linux 9 guest (see gap #4 in
+`known-gaps-remediation.md` for the root-partition-selection defect found
+and fixed during that pass). Ships disabled by default
+(`guest_fs_probe.enabled: false`) pending a fleet pilot; v1 supports GPT +
+XFS (RHEL 7/8/9's default root filesystem) only — see gap #4 in
+`known-gaps-remediation.md` for the full scope/limitations (`ext4`, LVM,
+differencing disks not yet supported).
+
+| Metric | Unit | What it tells you |
+|---|---|---|
+| `vm.guest.filesystem.used_percent` | % | Guest root filesystem used space — same metric name as Tier 1.5's (no `drive_letter` attribute; root filesystem only, not a per-volume breakdown) |
 
 ### Event-derived metric (any tier with `windowseventlogreceiver`)
 
@@ -106,8 +124,8 @@ go/no-go validation — see `docs/phase3-guest-probe-plan.md`.
 | VM Memory Pressure | `vm.memory.current_pressure` | 1 |
 | VM Virtual Disk Latency | `vm.storage.latency` | 1 |
 | VM Network Throughput | `vm.net.bytes_total` | 1 |
-| Guest Filesystem Used | `vm.guest.filesystem.used_percent` | 1.5 (chart exists; populates only if `guest_probe.enabled: true`) |
-| Guest Memory Used | `vm.guest.memory.used_percent` | 1.5 (same) |
+| Guest Filesystem Used | `vm.guest.filesystem.used_percent` | 1.5 or 1.6 (chart exists; populates if either `guest_probe.enabled: true` (Windows) or `guest_fs_probe.enabled: true` (Windows/Linux)) |
+| Guest Memory Used | `vm.guest.memory.used_percent` | 1.5 (Windows guests only; populates only if `guest_probe.enabled: true`) |
 
 ### Detectors (`terraform/detectors.tf`)
 
@@ -117,8 +135,8 @@ go/no-go validation — see `docs/phase3-guest-probe-plan.md`.
 | Hypervisor Host CPU Sustained High | `hyperv.host_cpu.total_run_time` | > 90% for 10m | Enabled |
 | VM Memory Pressure High | `vm.memory.current_pressure` | > 80% for 10m | Enabled |
 | VM Virtual Disk Latency High | `vm.storage.latency` | > 20ms for 5m | Enabled |
-| Guest Filesystem Used High | `vm.guest.filesystem.used_percent` | > 85% for 15m | **Disabled** — enable alongside `guest_probe.enabled` |
-| Guest Memory Used High | `vm.guest.memory.used_percent` | > 90% for 10m | **Disabled** — enable alongside `guest_probe.enabled` |
+| Guest Filesystem Used High | `vm.guest.filesystem.used_percent` | > 85% for 15m | **Disabled** — enable alongside `guest_probe.enabled` (Windows, Tier 1.5) or `guest_fs_probe.enabled` (Windows/Linux, Tier 1.6) |
+| Guest Memory Used High | `vm.guest.memory.used_percent` | > 90% for 10m | **Disabled** — enable alongside `guest_probe.enabled` (Windows guests only) |
 | Live Migration Failures | `hyperv.vmms.migration_failures` | > 0 in 10m | Enabled |
 
 `vm.disk.*` (Tier 1 companion) is exported but not yet wired into a chart
@@ -131,11 +149,19 @@ truth for your environment.
 - **Tiers 0, 1, and 1 companion** are the baseline for any Hyper-V
   environment — no guest-VM policy decision needed, deploy on the SCVMM
   console box and every physical host.
-- **Tier 1.5** is the right choice if you want guest filesystem/memory
-  visibility but don't want to deploy a collector inside guest VMs at all —
-  PowerShell Direct over VMBus, no guest network path, no agent process.
-  Requires guest Integration Services and a credential valid inside the
-  guest.
+- **Tier 1.5** is the right choice for **Windows guests** if you want guest
+  filesystem/memory visibility but don't want to deploy a collector inside
+  guest VMs at all — PowerShell Direct over VMBus, no guest network path,
+  no agent process. Requires guest Integration Services and a credential
+  valid inside the guest. Has no Linux equivalent (no VMBus-based remote-exec
+  mechanism exists for Linux guests).
+- **Tier 1.6** is the right choice for **Linux guests** (or Windows guests,
+  filesystem-only) needing filesystem visibility with zero guest
+  interaction of any kind — not even a one-off command. Reads the VHDX
+  directly on the host; v1 supports GPT + XFS only. Does not cover guest
+  memory (no equivalent to gap #2's fix here) — see
+  `known-gaps-remediation.md` gap #2 for the zero-code Dynamic Memory
+  (`Min = Max = Startup`) alternative, which works for any guest OS.
 - **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
   native Windows mechanism that could centralize event-log visibility (host +
   guest) without per-VM collector deployment. Not part of this proposal; no

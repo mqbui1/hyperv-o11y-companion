@@ -1,17 +1,21 @@
 # installer/
 
-WiX v4 source producing a single MSI with two independently selectable
+WiX v4 source producing a single MSI with three independently selectable
 features:
 
 | Feature | Installs | Deploy on |
 |---|---|---|
 | `ScvmmPollerFeature` | `hyperv-scvmm-poller` service + `scvmm-poller.yaml` | Central SCVMM console box only (e.g. `SCVMM-CONSOLE-01`) — one instance for the whole estate |
 | `HostCompanionFeature` | `hyperv-host-companion` service + `host-companion.yaml` | Every physical Hyper-V host — one instance per host |
+| `GuestFSProbeFeature` | `hyperv-guestfs-probe` service + `guestfs-probe.yaml` | Every physical Hyper-V host with Linux (or Windows) guests needing filesystem usage — one instance per host, Tier 1.6 |
 
-Both are registered as native Windows Services (`ServiceInstall`/
+All three are registered as native Windows Services (`ServiceInstall`/
 `ServiceControl`, `Start="auto"`), so they start on boot and stop cleanly on
-uninstall — no Task Scheduler entries. This is only half the solution: the
-Splunk OTel Collector (Tier 1, host-side Perfmon/event-log collection) is a
+uninstall — no Task Scheduler entries. `GuestFSProbeFeature` is a fully
+independent service/process from `HostCompanionFeature` (separate binary,
+separate config, separate service) — it can be installed, removed, or fail
+without affecting Tier 1/1.5. This is only part of the solution: the Splunk
+OTel Collector (Tier 1, host-side Perfmon/event-log collection) is a
 **separate** install per Hyper-V host, not part of this MSI — see step 5
 below.
 
@@ -33,11 +37,12 @@ cd installer
 What `build.ps1` actually does, in order:
 
 1. Wipes and recreates `installer\staging\{bin,config}`.
-2. Cross-compiles both binaries with `GOOS=windows GOARCH=amd64`:
+2. Cross-compiles all three binaries with `GOOS=windows GOARCH=amd64`:
    `go build -o staging\bin\scvmm-poller.exe ./cmd/scvmm-poller` and the same
-   for `host-companion.exe`.
-3. Copies `config\scvmm-poller.yaml` and `config\host-companion.yaml`
-   (the example configs shipped in this repo) into `staging\config`.
+   for `host-companion.exe` and `guestfs-probe.exe`.
+3. Copies `config\scvmm-poller.yaml`, `config\host-companion.yaml`, and
+   `config\guestfs-probe.yaml` (the example configs shipped in this repo)
+   into `staging\config`.
 4. Runs `wix build installer\main.wxs -o installer\out\HyperVO11yCompanion.msi`.
 
 Output: `installer\out\HyperVO11yCompanion.msi`.
@@ -48,9 +53,10 @@ Output: `installer\out\HyperVO11yCompanion.msi`.
 and test with, but must never be reused for a real customer install:
 
 - `Package/@UpgradeCode` (one value, near the top of the file)
-- `Component/@Guid` on all six `Component` elements (`ScvmmPollerBinary`,
+- `Component/@Guid` on all nine `Component` elements (`ScvmmPollerBinary`,
   `ScvmmPollerConfig`, `ScvmmPollerService`, `HostCompanionBinary`,
-  `HostCompanionConfig`, `HostCompanionService`)
+  `HostCompanionConfig`, `HostCompanionService`, `GuestFSProbeBinary`,
+  `GuestFSProbeConfig`, `GuestFSProbeService`)
 
 Generate fresh GUIDs (e.g. `[guid]::NewGuid()` in PowerShell) and replace each
 placeholder before building the MSI you intend to hand to the customer.
@@ -68,26 +74,31 @@ msiexec /i HyperVO11yCompanion.msi ADDLOCAL=ScvmmPollerFeature /qn
 
 # Every physical Hyper-V host: host companion only
 msiexec /i HyperVO11yCompanion.msi ADDLOCAL=HostCompanionFeature /qn
+
+# Every physical Hyper-V host with Linux guests: host companion + guestfs probe (Tier 1.6)
+msiexec /i HyperVO11yCompanion.msi ADDLOCAL=HostCompanionFeature,GuestFSProbeFeature /qn
 ```
 
 This installs to `C:\Program Files\Splunk\HyperVO11yCompanion\` (`bin\` and
 `config\` subfolders) and registers the relevant Windows Service(s)
-(`hyperv-scvmm-poller`, `hyperv-host-companion`), set to `Start=auto`. Neither
-service starts running usefully until its config and credentials (steps
-6–8 below) are in place — the service will start on boot but fail to reach
-SCVMM/Splunk without them.
+(`hyperv-scvmm-poller`, `hyperv-host-companion`, `hyperv-guestfs-probe`), set
+to `Start=auto`. None of the services start running usefully until their
+config and credentials (steps 6–8 below) are in place — a service will start
+on boot but fail to reach SCVMM/Splunk without them.
 
-Config files (`config\scvmm-poller.yaml`, `config\host-companion.yaml`) are
-installed with `NeverOverwrite="yes"` — re-running the installer (e.g. for an
-upgrade) will not clobber an operator's already-tuned config. Edit the config
-and restart the relevant service (`Restart-Service hyperv-scvmm-poller` /
-`Restart-Service hyperv-host-companion`) to pick up changes; neither service
-currently watches its config file for live reload.
+Config files (`config\scvmm-poller.yaml`, `config\host-companion.yaml`,
+`config\guestfs-probe.yaml`) are installed with `NeverOverwrite="yes"` —
+re-running the installer (e.g. for an upgrade) will not clobber an operator's
+already-tuned config. Edit the config and restart the relevant service
+(`Restart-Service hyperv-scvmm-poller` / `Restart-Service
+hyperv-host-companion` / `Restart-Service hyperv-guestfs-probe`) to pick up
+changes; none of the services currently watch their config file for live
+reload.
 
 ## 5. Install the Splunk OTel Collector (Tier 1) — separate from this MSI
 
-The MSI above only covers the two companion services (Tier 0 and the Tier 1
-disk-metrics companion). The core Perfmon/event-log collection (Tier 1)
+The MSI above only covers the companion services (Tier 0, the Tier 1
+disk-metrics companion, and Tier 1.6). The core Perfmon/event-log collection (Tier 1)
 requires installing the **Splunk Distribution of the OpenTelemetry Collector
 for Windows** separately, on **every** Hyper-V host — typically pushed via
 whatever the customer already uses for host-level software (GPO/SCCM).
@@ -195,9 +206,10 @@ longer `disk_map.build_timeout`.
 
 ## 8. Provision credentials via Windows Credential Manager
 
-Neither service reads secrets from disk — both read named credentials from
-Windows Credential Manager at startup (`internal/creds`), readable only by
-the account the service runs as.
+None of the services read secrets from disk — those that need credentials
+(`hyperv-scvmm-poller`) read named credentials from Windows Credential
+Manager at startup (`internal/creds`), readable only by the account the
+service runs as.
 
 On the **SCVMM console box**, run (elevated PowerShell, as the account the
 `hyperv-scvmm-poller` service will run as):
@@ -215,6 +227,11 @@ cmdkey /generic:hyperv-o11y/splunk-token /user:x-sf-token                /pass:<
 (guest-probe-disabled) configuration — it only queries the local Hyper-V host
 directly and exports to the local collector. Only if/when a Tier 1.5 pilot is
 approved (step 10) does a guest-probe credential need to be provisioned.
+
+`hyperv-guestfs-probe` needs **no credentials at all**, ever — it never talks
+to the guest, only reads the VHDX file directly on the host and exports to
+the local collector, same as `hyperv-host-companion` in its default
+configuration.
 
 ## 9. One-time: provision dashboards + detectors (Terraform)
 
@@ -264,10 +281,41 @@ supervised pilot only (do not enable fleet-wide):
 Full details, including the three go/no-go criteria to validate during the
 pilot, are in `docs/deployment-guide.md` and `docs/phase3-guest-probe-plan.md`.
 
-## 11. Post-install verification
+## 11. Optional: Tier 1.6 pilot enablement (Linux guest filesystem usage, zero guest footprint)
+
+Tier 1.6 (`guestfs-probe.yaml`'s `guest_fs_probe`) closes gap #4 for Linux
+(and Windows) guests by reading each guest's VHDX directly on the host — no
+guest interaction of any kind, so it applies even where an in-guest
+collector policy rules out Tier 1.5 for non-Windows guests. Validated
+end-to-end against a real, running Rocky Linux 9 guest (see gap #4 in
+`docs/known-gaps-remediation.md` for the root-partition-selection defect
+found and fixed during that pass). Ships disabled by default pending a
+fleet pilot; v1 only supports GPT-partitioned, non-differencing VHDX disks
+with an XFS root filesystem (RHEL 7/8/9's default) — see `internal/guestfs`
+for the full scope and unsupported-layout error types (`ErrLVM`,
+`ErrNotXFS`, `ErrUnsupported`). To pilot:
+
+1. Install `GuestFSProbeFeature` on the pilot host(s) (see step 4 above).
+2. On each pilot host's `guestfs-probe.yaml`:
+   ```yaml
+   guest_fs_probe:
+     enabled: true
+     vm_include: ["PilotRHEL01", "PilotRHEL02"]   # explicit names/globs; empty = nothing probed
+     sample_interval: 5m
+     sample_timeout: 30s
+   ```
+3. `Restart-Service hyperv-guestfs-probe` and confirm
+   `vm.guest.filesystem.used_percent` appears on the pilot VMs' entities
+   within one `sample_interval`. A VM logged as skipped (differencing disk,
+   LVM, non-XFS filesystem) is a known v1 scope limit, not a bug — see
+   `internal/guestfs`'s package docs for what's supported.
+
+## 12. Post-install verification
 
 - `Get-Service hyperv-scvmm-poller`, `Get-Service hyperv-host-companion`,
-  `Get-Service splunk-otel-collector` — all `Running`.
+  `Get-Service hyperv-guestfs-probe`, `Get-Service splunk-otel-collector` —
+  all `Running` (only check `hyperv-guestfs-probe` if that feature was
+  installed).
 - In Splunk Infrastructure Monitoring, confirm hosts tagged
   `host.type=hypervisor` and `host.type=hypervisor_managed_vm` appear within
   a few minutes.
@@ -283,8 +331,8 @@ msiexec /x HyperVO11yCompanion.msi /qn
 ```
 
 Uninstalling stops and removes the relevant Windows Service(s) cleanly — no
-data-migration step, since neither service holds state the uninstall needs to
-preserve. See `docs/parity-testing-and-cutover.md` for the shadow → diff →
+data-migration step, since none of the services hold state the uninstall
+needs to preserve. See `docs/parity-testing-and-cutover.md` for the shadow → diff →
 cutover plan if replacing existing PowerShell scripts/scheduled tasks with
 these services, including the recommended rollback path (re-enable the old
 Scheduled Task rather than reinstalling the service).

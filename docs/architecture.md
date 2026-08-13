@@ -2,13 +2,24 @@
 
 ## Overview
 
-Five-tier collection. What started as a two-tier host/guest split (mirroring
+Six-tier collection. What started as a two-tier host/guest split (mirroring
 the pattern the vSphere navigator in Splunk Observability Cloud relies on)
-grew three more tiers once real customer POC findings showed Perfmon alone
+grew four more tiers once real customer POC findings showed Perfmon alone
 can't see VM power-state, live-migration failures, or (for most fleets)
 in-guest process/app data at an affordable MTS cost. Each tier is a distinct
 collection mechanism with a distinct blast radius — see
 `docs/known-gaps-remediation.md` for exactly which gap each tier closes.
+
+Tier 1.5 and Tier 1.6 both close gap #4 (guest filesystem used %), via two
+different mechanisms with different guest-OS coverage: Tier 1.5
+(PowerShell Direct) is Windows-guest-only but also covers gap #2 (guest
+memory, static-memory VMs); Tier 1.6 (host-side VHDX read) is Linux- and
+Windows-guest capable but filesystem-only, and never runs anything inside
+the guest at all — not even a one-off command. They are independent
+Windows Services (`internal/guestprobe` inside `cmd/host-companion`, vs.
+`internal/guestfs` inside its own `cmd/guestfs-probe`), not alternates
+wired into the same process, so a customer can run either, both, or
+neither without one implementation affecting the other.
 
 ```
 ┌───────────────── Tier 0 — SCVMM console (hyperv-scvmm-poller) ─────────┐
@@ -46,9 +57,19 @@ collection mechanism with a distinct blast radius — see
               │ guest probe (implemented,           │
               │ disabled by default pending          │
               │ go/no-go — the only in-guest         │
-              │ metrics path in this proposal)        │
+              │ metrics path in this proposal;        │
+              │ Windows guests only)                  │
               │ in-guest metrics with no guest       │
               │ network egress or agent required     │
+              └──────────────────────────────────────┘
+              ┌──────────────────────────────────────┐
+              │ Tier 1.6 — VHDX host-side read         │
+              │ (cmd/guestfs-probe, implemented,       │
+              │ disabled by default) — Windows AND     │
+              │ Linux (RHEL 7/8/9, GPT+XFS) guests,     │
+              │ zero guest interaction of any kind —   │
+              │ parses the guest's own VHDX file        │
+              │ directly on the host                   │
               └──────────────────────────────────────┘
               ┌──────────────────────────────────────┐
               │ Future idea, not gap-driven, not built │
@@ -65,7 +86,8 @@ collection mechanism with a distinct blast radius — see
 | 0 | `hyperv-scvmm-poller` (`hyperv-o11y-companion` repo) — Windows Service polling SCVMM | Central SCVMM console box (e.g. `SCVMM-CONSOLE-01`) | #1 (power-state, SOLVED), #8 (guest_os, SOLVED) |
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
-| 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | **Now the only viable path** to #2/#4 for this customer (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
+| 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | #2/#4 for **Windows** guests (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
+| 1.6 | VHDX/GPT/filesystem-superblock host-side read (`internal/guestfs`, `cmd/guestfs-probe`) | Own Windows Service, every Hyper-V host; zero guest interaction of any kind | #4 for **Windows and Linux** guests (implemented and validated end-to-end against a real Linux guest, `guest_fs_probe.enabled: false` by default pending fleet pilot; v1 supports GPT+XFS only — see `docs/known-gaps-remediation.md` gap #4) |
 
 **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
 native Windows mechanism that could centralize event-log visibility (host +
@@ -145,8 +167,10 @@ if other event-log channels need to become alertable — see
 - `terraform/detectors.tf` — VM health critical, hypervisor CPU high, VM
   memory pressure high, VM storage latency high (unit confirmed via
   real-fleet empirical analysis and enabled at a 20ms threshold — gap #5,
-  SOLVED), guest filesystem used high (Tier 1.5, gap #4 — ships `disabled =
-  true`, enable alongside `guest_probe.enabled`), VMMS migration failures
+  SOLVED), guest filesystem used high (gap #4 — same metric name,
+  producible by either Tier 1.5 or Tier 1.6; ships `disabled = true`,
+  enable alongside whichever tier's `*.enabled` flag is turned on), VMMS
+  migration failures
 
 All chart/detector `program_text` filters on `host.type`, per the table
 above — this is why getting the resource attribute strategy right matters
@@ -161,9 +185,11 @@ more than any individual metric mapping.
   that data (once emitted as OTLP/dimension-API writes with matching resource
   attributes) land on the same entities as everything else here.
 - Deploy any collector inside guest VMs at all for this customer, per
-  explicit customer decision (see gap #2/#4). Tier 1.5 (PowerShell Direct
-  guest probe) is the only in-guest-metrics path in this proposal, pending
-  its own go/no-go decision.
+  explicit customer decision (see gap #2/#4) — confirmed to apply to every
+  guest OS, not just Windows. Tier 1.5 (PowerShell Direct guest probe) is
+  the only in-guest-metrics path in this proposal, pending its own go/no-go
+  decision; Tier 1.6 (VHDX host-side read) has no in-guest path at all to
+  gate, since it never touches the guest.
 - Attempt full content/navigator parity with the vSphere integration in one
   pass — this is a field accelerator (dashboards + detectors as code), not a
   claim of native-integration-equivalent coverage. See `docs/limitations.md`.

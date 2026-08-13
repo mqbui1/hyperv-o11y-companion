@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  Builds hyperv-o11y-companion's two Windows Service binaries and packages
-  them, plus their example configs, into a single MSI via the WiX v4
-  toolset.
+  Builds hyperv-o11y-companion's three Windows Service binaries and
+  packages them, plus their example configs, into a single MSI via the
+  WiX v4 toolset.
 
 .PREREQUISITES
   - Go toolchain (any OS with GOOS=windows cross-compile support)
@@ -23,13 +23,14 @@ $stagingConfig = Join-Path $staging "config"
 Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stagingBin, $stagingConfig, $OutDir | Out-Null
 
-Write-Host "Building scvmm-poller.exe and host-companion.exe (GOOS=windows)..."
+Write-Host "Building scvmm-poller.exe, host-companion.exe, and guestfs-probe.exe (GOOS=windows)..."
 Push-Location $RepoRoot
 try {
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"
     go build -o (Join-Path $stagingBin "scvmm-poller.exe") ./cmd/scvmm-poller
     go build -o (Join-Path $stagingBin "host-companion.exe") ./cmd/host-companion
+    go build -o (Join-Path $stagingBin "guestfs-probe.exe") ./cmd/guestfs-probe
 } finally {
     Remove-Item Env:\GOOS -ErrorAction SilentlyContinue
     Remove-Item Env:\GOARCH -ErrorAction SilentlyContinue
@@ -38,6 +39,7 @@ try {
 
 Copy-Item (Join-Path $RepoRoot "config\scvmm-poller.yaml") $stagingConfig
 Copy-Item (Join-Path $RepoRoot "config\host-companion.yaml") $stagingConfig
+Copy-Item (Join-Path $RepoRoot "config\guestfs-probe.yaml") $stagingConfig
 
 Write-Host "Building MSI..."
 wix build (Join-Path $PSScriptRoot "main.wxs") -o (Join-Path $OutDir "HyperVO11yCompanion.msi")
