@@ -87,7 +87,7 @@ neither without one implementation affecting the other.
 | 1 | Splunk OTel Collector, `hypervisor-host-config.yaml` | Every Hyper-V host | Host/hypervisor/VM Perfmon metrics, VMMS migration-failure events (#9) |
 | 1 (companion) | `hyperv-host-companion` (`hyperv-o11y-companion` repo) — Windows Service | Every Hyper-V host, alongside Tier 1's collector | #3 (VHD attribution, SOLVED) |
 | 1.5 | PowerShell Direct guest probe (`internal/guestprobe`) | Host-initiated, no in-guest agent/network egress | #2/#4 for **Windows** guests (implemented, `guest_probe.enabled: false` by default — blocked on go/no-go decision, see `docs/phase3-guest-probe-plan.md`) |
-| 1.6 | VHDX/GPT/filesystem-superblock host-side read (`internal/guestfs`, `cmd/guestfs-probe`) | Own Windows Service, every Hyper-V host; zero guest interaction of any kind | #4 for **Windows and Linux** guests (implemented and validated end-to-end against a real Linux guest, `guest_fs_probe.enabled: false` by default pending fleet pilot; v1 supports GPT+XFS only — see `docs/known-gaps-remediation.md` gap #4) |
+| 1.6 | VHDX/GPT/filesystem-superblock host-side read (`internal/guestfs`, `cmd/guestfs-probe`) | Own Windows Service, every Hyper-V host; zero guest interaction of any kind | #4 for **Windows and Linux** guests (implemented and validated end-to-end against a real Linux guest, `guest_fs_probe.enabled: false` by default pending fleet pilot; v1 supports GPT+XFS only — see `docs/known-gaps-remediation.md` gap #4). Least-privilege service account is an open question — see `docs/permissions-model.md`. |
 
 **Future idea, not gap-driven, not built:** Windows Event Forwarding — a
 native Windows mechanism that could centralize event-log visibility (host +
