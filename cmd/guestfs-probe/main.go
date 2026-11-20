@@ -81,6 +81,36 @@ func runService(ctx context.Context, cfg *config.GuestFSProbeServiceConfig) erro
 		return err
 	}
 
+	// Coverage-roadmap telemetry: which v1-unsupported layout blocked a
+	// probe, and how often. Drives which format (LVM? ext4/btrfs?) gets
+	// prioritized for v2, from real fleet data instead of a guess — see
+	// docs/architecture-gaps-overview.md.
+	skipCounter, err := exp.Meter.Int64Counter("vm.guestfs.probe.skip",
+		metric.WithDescription("Count of guestfs probe cycles skipped for a VM, tagged by skip_reason (differencing, lvm, mbr, encrypted, ext4_btrfs, no_linux_partition, panic, other)"))
+	if err != nil {
+		return err
+	}
+
+	// 2i: probe failure observability — RC asked for these before 2a/2b so
+	// real skip_reason counts from the fleet size those items before code is
+	// written. probeFailure counts each failed attempt; probeStale reports
+	// how stale the last-known-good data point is.
+	probeFailure, err := exp.Meter.Int64Counter("hyperv.guest_probe.failure",
+		metric.WithDescription("Count of failed guest filesystem probe attempts, tagged by vm.name and reason"))
+	if err != nil {
+		return err
+	}
+	probeStale, err := exp.Meter.Float64Gauge("hyperv.guest_probe.stale_seconds",
+		metric.WithDescription("Seconds since the last successful guest filesystem probe for this VM"),
+		metric.WithUnit("s"))
+	if err != nil {
+		return err
+	}
+
+	// lastSuccess tracks the wall-clock time of the last successful probe per
+	// VM name. Single-goroutine loop — no mutex needed.
+	lastSuccess := make(map[string]time.Time)
+
 	state := &diskMapState{}
 	buildDiskMap(ctx, cfg, state)
 
@@ -106,7 +136,7 @@ func runService(ctx context.Context, cfg *config.GuestFSProbeServiceConfig) erro
 		case <-buildTicker.C:
 			buildDiskMap(ctx, cfg, state)
 		case <-probeC:
-			sampleGuestFS(ctx, cfg, state, fsUsedGauge)
+			sampleGuestFS(ctx, cfg, state, fsUsedGauge, skipCounter, probeFailure, probeStale, lastSuccess)
 		}
 	}
 }
@@ -130,8 +160,9 @@ func buildDiskMap(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, st
 // (internal/guestfs.FilesystemUsedPercent) and exports
 // vm.guest.filesystem.used_percent. A VM with an unsupported layout
 // (differencing disk, LVM, non-XFS filesystem) or any other read error is
-// logged and skipped — never fatal to the other VMs' probe cycle, same
-// fallback philosophy as host-companion's sampleGuestProbe.
+// logged, counted (skipCounter, tagged by skip_reason), and skipped —
+// never fatal to the other VMs' probe cycle, same fallback philosophy as
+// host-companion's sampleGuestProbe.
 //
 // v1 limitation: hyperv.DiskMap.ByID keeps only the last VMDiskEntry seen
 // per VM (it was originally just a .vmgs-instance fallback, see
@@ -139,7 +170,7 @@ func buildDiskMap(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, st
 // not guaranteed to resolve to its boot/root disk here. Fine for
 // single-disk VMs (the common case); multi-disk VMs are a known follow-up,
 // not a v1 requirement.
-func sampleGuestFS(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, state *diskMapState, fsGauge metric.Float64Gauge) {
+func sampleGuestFS(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, state *diskMapState, fsGauge metric.Float64Gauge, skipCounter metric.Int64Counter, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
 	m := state.get()
 	if m == nil {
 		log.Printf("guestfs probe sample skipped: disk map not yet built")
@@ -153,13 +184,64 @@ func sampleGuestFS(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, s
 		if entry.Path == "" {
 			continue
 		}
-		pct, err := guestfs.FilesystemUsedPercent(entry.Path)
-		if err != nil {
-			log.Printf("guestfs probe: vm=%s: %v", entry.VMName, err)
-			continue
-		}
-		fsGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
+		probeOneVM(ctx, entry, fsGauge, skipCounter, probeFailure, probeStale, lastSuccess)
 	}
+}
+
+// probeOneVM probes a single VM's VHDX and recovers from any panic while
+// doing so. A malformed/corrupt VHDX is a certainty at fleet scale, not
+// an edge case — one VM's bad disk image must not crash the probe cycle
+// (and take every other VM's probe down with it) or crash-loop the whole
+// service. A recovered panic is counted under skip_reason="panic", same
+// as any other classified skip, so it shows up in the same
+// coverage-roadmap telemetry rather than silently vanishing into a log
+// line.
+//
+// 2i: on success, records the success time in lastSuccess and emits
+// probeStale=0. On any failure (including panic), increments probeFailure
+// and emits probeStale = seconds since last success (24h sentinel if this
+// VM has never succeeded).
+func probeOneVM(ctx context.Context, entry hyperv.VMDiskEntry, fsGauge metric.Float64Gauge, skipCounter metric.Int64Counter, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("guestfs probe: vm=%s: recovered from panic: %v", entry.VMName, r)
+			skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", "panic")))
+			probeFailure.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("vm.name", entry.VMName),
+				attribute.String("reason", "other"),
+			))
+			recordProbeStale(ctx, entry.VMName, lastSuccess, probeStale)
+		}
+	}()
+
+	pct, err := guestfs.FilesystemUsedPercent(entry.Path)
+	if err != nil {
+		reason := guestfs.ClassifySkipReason(err)
+		log.Printf("guestfs probe: vm=%s: %v", entry.VMName, err)
+		skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", string(reason))))
+		probeFailure.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("vm.name", entry.VMName),
+			attribute.String("reason", "other"),
+		))
+		recordProbeStale(ctx, entry.VMName, lastSuccess, probeStale)
+		return
+	}
+	lastSuccess[entry.VMName] = time.Now()
+	fsGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
+	probeStale.Record(ctx, 0, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
+}
+
+// recordProbeStale emits hyperv.guest_probe.stale_seconds for vmName. If the
+// VM has never had a successful probe, emits 86400 (24h) as a sentinel so
+// the "> 15 minutes" detector fires immediately on first rollout.
+func recordProbeStale(ctx context.Context, vmName string, lastSuccess map[string]time.Time, gauge metric.Float64Gauge) {
+	var stale float64
+	if t, ok := lastSuccess[vmName]; ok {
+		stale = time.Since(t).Seconds()
+	} else {
+		stale = 86400 // never succeeded — fire the detector immediately
+	}
+	gauge.Record(ctx, stale, metric.WithAttributes(attribute.String("vm.name", vmName)))
 }
 
 // matchesInclude reports whether name matches at least one filepath.Match

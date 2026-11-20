@@ -111,6 +111,25 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 		return err
 	}
 
+	// 2i: probe failure observability — same metrics as guestfs-probe so both
+	// tiers show up on the same stale-data detector. probeFailure counts each
+	// failed Tier 1.5 attempt; probeStale reports how stale the last good
+	// PowerShell Direct sample is per VM.
+	probeFailure, err := exp.Meter.Int64Counter("hyperv.guest_probe.failure",
+		metric.WithDescription("Count of failed guest probe attempts, tagged by vm.name and reason"))
+	if err != nil {
+		return err
+	}
+	probeStale, err := exp.Meter.Float64Gauge("hyperv.guest_probe.stale_seconds",
+		metric.WithDescription("Seconds since the last successful guest probe for this VM"),
+		metric.WithUnit("s"))
+	if err != nil {
+		return err
+	}
+
+	// lastSuccess for Tier 1.5 — single-goroutine guestProbe ticker, no mutex needed.
+	guestProbeLastSuccess := make(map[string]time.Time)
+
 	state := &diskMapState{}
 	buildDiskMap(ctx, cfg, state) // populate once at startup before the first sample cycle
 
@@ -140,7 +159,7 @@ func runService(ctx context.Context, cfg *config.HostCompanionConfig) error {
 		case <-sampleTicker.C:
 			sampleAndExport(ctx, cfg, state, latencyGauge, readGauge, writeGauge)
 		case <-guestProbeC:
-			sampleGuestProbe(ctx, cfg, state, guestFsUsedGauge, guestMemUsedGauge)
+			sampleGuestProbe(ctx, cfg, state, guestFsUsedGauge, guestMemUsedGauge, probeFailure, probeStale, guestProbeLastSuccess)
 		}
 	}
 }
@@ -228,7 +247,7 @@ func matchRate(matched, unmatched int) float64 {
 // VM's probe failing (e.g. missing guest Integration Services) does not
 // block the others — logged and skipped, same fallback philosophy as
 // buildDiskMap/sampleAndExport above.
-func sampleGuestProbe(ctx context.Context, cfg *config.HostCompanionConfig, state *diskMapState, fsGauge, memGauge metric.Float64Gauge) {
+func sampleGuestProbe(ctx context.Context, cfg *config.HostCompanionConfig, state *diskMapState, fsGauge, memGauge metric.Float64Gauge, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
 	m := state.get()
 	if m == nil {
 		log.Printf("guest probe sample skipped: disk map not yet built")
@@ -250,8 +269,26 @@ func sampleGuestProbe(ctx context.Context, cfg *config.HostCompanionConfig, stat
 		cancel()
 		if err != nil {
 			log.Printf("guest probe: vm=%s: %v", entry.VMName, err)
+			// 2i: classify the error coarsely — PowerShell Direct failures
+			// are typically powered_off or integration_broken; we don't have
+			// a typed error from guestprobe.Sample so use "other" and let
+			// stale_seconds be the actionable signal for the detector.
+			reason := classifyGuestProbeError(err)
+			probeFailure.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("vm.name", entry.VMName),
+				attribute.String("reason", reason),
+			))
+			var stale float64
+			if t, ok := lastSuccess[entry.VMName]; ok {
+				stale = time.Since(t).Seconds()
+			} else {
+				stale = 86400 // never succeeded — fire the detector immediately
+			}
+			probeStale.Record(ctx, stale, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
 			continue
 		}
+		lastSuccess[entry.VMName] = time.Now()
+		probeStale.Record(ctx, 0, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
 		for _, s := range sample.Filesystem {
 			pct, ok := s.UsedPercent()
 			if !ok {
@@ -266,6 +303,27 @@ func sampleGuestProbe(ctx context.Context, cfg *config.HostCompanionConfig, stat
 		if pct, ok := sample.Memory.UsedPercent(); ok {
 			memGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
 		}
+	}
+}
+
+// classifyGuestProbeError maps a PowerShell Direct probe error to a coarse
+// reason tag for hyperv.guest_probe.failure. guestprobe.Sample returns a
+// plain error string — match on known substrings from PowerShell Direct and
+// fall through to "other".
+func classifyGuestProbeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "not running") || strings.Contains(msg, "powered off") || strings.Contains(msg, "vm is not"):
+		return "powered_off"
+	case strings.Contains(msg, "integration services") || strings.Contains(msg, "heartbeat"):
+		return "integration_broken"
+	case strings.Contains(msg, "credential") || strings.Contains(msg, "access denied") || strings.Contains(msg, "logon failure"):
+		return "credential_missing"
+	default:
+		return "other"
 	}
 }
 
