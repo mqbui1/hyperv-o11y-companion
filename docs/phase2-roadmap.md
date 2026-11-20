@@ -20,7 +20,7 @@ separate copies of that package.
 | 2b | LVM Logical Volume enumeration | **Approved** | Low — build 2i first | `internal/guestfs/lvm.go` (new), `internal/guestfs/probe.go` |
 | 2c | Multi-partition / multi-disk + diskmap fix | **Approved** | High — main Linux item | `internal/hyperv/types.go`, `internal/hyperv/diskmap.go`, `cmd/guestfs-probe/main.go` |
 | 2d | MBR / Gen 1 VM support | **Approved** | **High — not a fast follow** | `internal/guestfs/mbr.go` (new), `internal/guestfs/probe.go` |
-| 2e | 4Kn native-sector VHDX support | **Approved** | Medium — count pending | `internal/guestfs/gpt.go`, `internal/guestfs/vhdx.go` |
+| 2e | 4Kn native-sector VHDX support | **Not needed — current fleet** | Deferred | `internal/guestfs/gpt.go`, `internal/guestfs/vhdx.go` |
 | 2f | Checkpoint / differencing disk chain | **Approved** | Medium — 7% of Jewel | `internal/guestfs/vhdx.go` |
 | 2g | Credential gap enforcement (Tier 1.5) | **Not Needed** | — | None |
 | 2h | NTFS $Bitmap parser (Windows guest filesystem %) | **Approved** | **High — largest new coverage** | `internal/guestfs/ntfs.go` (new), `internal/guestfs/probe.go` |
@@ -269,19 +269,16 @@ LVM-sourced data points.
 ---
 
 ### 2e — 4Kn native-sector VHDX support
-**Status: Approved | Priority: Medium — count still needed from RC**
+**Status: Not needed for current fleet | Priority: Deferred**
 
-`gptSectorSize = 512` is hardcoded in `internal/guestfs/gpt.go` (line 18).
-4Kn VHDXs silently produce wrong offsets → `skip_reason=other`.
+Read-only sweep of all 16 monitored hosts confirmed 0 of 524 VMs have a
+VHDX with 4096-byte logical sectors (Chris Ojeda, 2026-11-20). No build
+required for RC's current fleet.
 
-**Chris's correction:** Read `PhysicalSectorSize` from the VHDX footer,
-not from GPT or filesystem structures.
-
-**Fix:** Read `PhysicalSectorSize` from VHDX footer in `vhdx.go`. Pass
-as parameter to `ParseGPT`, the MBR parser, and both filesystem parsers.
-
-**Pre-build:** RC to confirm count. Use `skip_reason=other` rate from 2i
-pilot as a signal — if `other` rate is elevated, 4Kn is a likely cause.
+Design notes retained for future fleets: read `PhysicalSectorSize` from
+the VHDX footer (`vhdx.go`) and pass as a parameter to `ParseGPT` and
+both filesystem parsers, replacing the `gptSectorSize = 512` constant in
+`internal/guestfs/gpt.go` (line 18).
 
 ---
 
@@ -317,6 +314,6 @@ receiver already has the `isEarlierController` fix.
 4. **2c diskmap fix** — small, self-contained; prerequisite for multi-partition
 5. **2c multi-partition** — `/boot` + `/` + data disks; main Linux item
 6. **2f (checkpoint)** — 7% of Jewel; design finalized
-7. **2e (4Kn)** — pending RC count; use `skip_reason=other` from 2i pilot
-8. **2a (ext4)** — pending real counts from 2i pilot
-9. **2b (LVM)** — pending real counts from 2i pilot
+7. **2a (ext4)** — pending real counts from 2i pilot
+8. **2b (LVM)** — pending real counts from 2i pilot
+9. **2e (4Kn)** — deferred; 0/524 VMs in current fleet (confirmed 2026-11-20)
