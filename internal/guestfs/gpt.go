@@ -22,12 +22,16 @@ const (
 )
 
 // Partition-type GUIDs this package cares about (UEFI spec Appendix A /
-// Linux distro conventions). Raw on-disk (little-endian-encoded) form.
+// Linux distro conventions / Windows partition GUIDs). Raw on-disk
+// (little-endian-encoded) form.
 var (
-	typeLinuxFilesystem = mustGUID("0fc63daf-8483-4772-8e79-3d69d8477de4")
-	typeLinuxLVM        = mustGUID("e6d6d379-f507-44c2-a23c-238f2a3df928")
-	typeLinuxSwap       = mustGUID("0657fd6d-a4ab-43c4-84e5-0933c84b4f4f")
-	typeESP             = mustGUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
+	typeLinuxFilesystem   = mustGUID("0fc63daf-8483-4772-8e79-3d69d8477de4")
+	typeLinuxLVM          = mustGUID("e6d6d379-f507-44c2-a23c-238f2a3df928")
+	typeLinuxSwap         = mustGUID("0657fd6d-a4ab-43c4-84e5-0933c84b4f4f")
+	typeESP               = mustGUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
+	typeWindowsBasicData  = mustGUID("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7") // Windows C: (2h: NTFS $Bitmap)
+	typeWindowsRecovery   = mustGUID("de94bba4-06d1-4d40-a16a-bfd50179d6ac") // WinRE — skip
+	typeMicrosoftReserved = mustGUID("e3c9e316-0b5c-4db8-817d-f92df00215ae") // MSR — skip
 )
 
 // Partition is one GPT entry's location on the logical disk, in bytes.
@@ -37,6 +41,13 @@ type Partition struct {
 	EndByte   int64 // exclusive
 	Name      string
 }
+
+// ErrNotGPT is returned when the disk has no valid GPT signature at LBA
+// 1 — most commonly a legacy MBR-partitioned disk (see gpt.go's package
+// doc: v1 is GPT-only), or a 4Kn-sector disk this v1 doesn't handle. A
+// distinct sentinel (not an inline fmt.Errorf) so it can be classified as
+// its own skip reason.
+var ErrNotGPT = fmt.Errorf("%w: no GPT signature at LBA 1 (not a GPT disk, or 4Kn sectors)", ErrUnsupported)
 
 // ErrNoLinuxPartition is returned when a GPT disk has no partition typed
 // as a plain Linux filesystem — e.g. an all-LVM layout (see ErrLVM) or a
@@ -56,7 +67,7 @@ func ReadPartitionTable(r *Reader) ([]Partition, error) {
 		return nil, fmt.Errorf("reading GPT header: %w", err)
 	}
 	if string(header[0:8]) != gptSignature {
-		return nil, fmt.Errorf("%w: no GPT signature at LBA 1 (not a GPT disk, or 4Kn sectors)", ErrUnsupported)
+		return nil, ErrNotGPT
 	}
 	partEntryLBA := binary.LittleEndian.Uint64(header[72:80])
 	numEntries := binary.LittleEndian.Uint32(header[80:84])
@@ -91,38 +102,44 @@ func ReadPartitionTable(r *Reader) ([]Partition, error) {
 	return out, nil
 }
 
-// FindRootFilesystem returns the largest plain Linux-filesystem-typed
-// partition (skipping ESP/swap), or ErrLVM if only an LVM PV is present,
-// or ErrNoLinuxPartition if neither is found. "Largest" (rather than
-// "first") matters because a standard non-LVM Anaconda layout types both
-// /boot and / as plain Linux filesystem partitions, with /boot (a small
-// fixed-size partition, ~1GB) listed before / (which gets the rest of
-// the disk) — picking the first match would silently report /boot's
-// usage instead of the actual root filesystem's. A guest with other
-// separate Linux filesystem partitions beyond /boot and / (e.g. a
-// dedicated /var) is still only probed on its single largest one; full
-// mount-point inventory is a follow-up, not a v1 requirement (gap #4
-// asks for root filesystem visibility, not a full mount-point
-// inventory).
+// FindRootFilesystem returns the best candidate partition to probe for
+// filesystem usage. Selection priority:
+//  1. Largest Linux-filesystem-typed partition (GPT 0fc63daf / MBR 0x83).
+//     Picks largest because Anaconda layouts include both /boot and / as
+//     typeLinuxFilesystem; we want / (the bigger one).
+//  2. Largest Windows Basic Data partition (GPT ebd0a0a2 / MBR 0x07).
+//     Probed for NTFS $Bitmap usage (2h). Only returned if no Linux
+//     partition is found, so dual-boot VMs are probed as Linux.
+//
+// Returns ErrLVM if only LVM PVs are present, ErrNoLinuxPartition if
+// nothing recognised is found (Windows Recovery / MSR / ESP are skipped).
 func FindRootFilesystem(parts []Partition) (Partition, error) {
 	var sawLVM bool
-	var best Partition
-	var found bool
+	var bestLinux, bestWindows Partition
+	var foundLinux, foundWindows bool
 	for _, p := range parts {
 		switch p.TypeGUID {
 		case typeLinuxFilesystem:
-			if !found || (p.EndByte-p.StartByte) > (best.EndByte-best.StartByte) {
-				best = p
-				found = true
+			if !foundLinux || (p.EndByte-p.StartByte) > (bestLinux.EndByte-bestLinux.StartByte) {
+				bestLinux = p
+				foundLinux = true
+			}
+		case typeWindowsBasicData:
+			if !foundWindows || (p.EndByte-p.StartByte) > (bestWindows.EndByte-bestWindows.StartByte) {
+				bestWindows = p
+				foundWindows = true
 			}
 		case typeLinuxLVM:
 			sawLVM = true
-		case typeESP, typeLinuxSwap:
+		case typeESP, typeLinuxSwap, typeWindowsRecovery, typeMicrosoftReserved:
 			continue
 		}
 	}
-	if found {
-		return best, nil
+	if foundLinux {
+		return bestLinux, nil
+	}
+	if foundWindows {
+		return bestWindows, nil
 	}
 	if sawLVM {
 		return Partition{}, ErrLVM

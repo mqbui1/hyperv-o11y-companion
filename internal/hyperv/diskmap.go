@@ -24,7 +24,7 @@ import (
 // original script backgrounds this with -TimeoutSec 300 because VMMS can be
 // slow under load — same reasoning applies here).
 func BuildDiskMap(ctx context.Context) (*DiskMap, error) {
-	script := `Get-VM | ForEach-Object { $vm = $_; Get-VMHardDiskDrive -VM $vm -ErrorAction SilentlyContinue | Select-Object @{n='VMId';e={$vm.Id.ToString()}}, @{n='VMName';e={$vm.Name}}, Path } | ConvertTo-Json -Depth 3`
+	script := `Get-VM | ForEach-Object { $vm = $_; Get-VMHardDiskDrive -VM $vm -ErrorAction SilentlyContinue | Select-Object @{n='VMId';e={$vm.Id.ToString()}}, @{n='VMName';e={$vm.Name}}, Path, ControllerNumber, ControllerLocation } | ConvertTo-Json -Depth 3`
 
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	var stdout, stderr bytes.Buffer
@@ -39,16 +39,41 @@ func BuildDiskMap(ctx context.Context) (*DiskMap, error) {
 		return nil, fmt.Errorf("decoding disk map: %w", err)
 	}
 
+	return newDiskMap(entries), nil
+}
+
+// newDiskMap builds a DiskMap from raw VMDiskEntry rows. Extracted from
+// BuildDiskMap so the boot-disk selection logic is unit-testable without
+// shelling out to powershell.exe.
+//
+// A VM with multiple disks produces multiple entries sharing the same VMId.
+// ByID keeps the entry at the lowest (ControllerNumber, ControllerLocation)
+// — the conventional boot-disk position — rather than last-write-wins.
+// ByPath is unaffected: keyed per-disk by the unique VHD(X) path.
+func newDiskMap(entries []VMDiskEntry) *DiskMap {
 	m := &DiskMap{ByPath: map[string]VMDiskEntry{}, ByID: map[string]VMDiskEntry{}}
 	for _, e := range entries {
 		if e.Path != "" {
 			m.ByPath[normalizePath(e.Path)] = e
 		}
-		if e.VMId != "" {
-			m.ByID[strings.ToLower(e.VMId)] = e
+		if e.VMId == "" {
+			continue
+		}
+		id := strings.ToLower(e.VMId)
+		if existing, ok := m.ByID[id]; !ok || isEarlierController(e, existing) {
+			m.ByID[id] = e
 		}
 	}
-	return m, nil
+	return m
+}
+
+// isEarlierController reports whether a sorts before b by
+// (ControllerNumber, ControllerLocation).
+func isEarlierController(a, b VMDiskEntry) bool {
+	if a.ControllerNumber != b.ControllerNumber {
+		return a.ControllerNumber < b.ControllerNumber
+	}
+	return a.ControllerLocation < b.ControllerLocation
 }
 
 func normalizePath(p string) string {

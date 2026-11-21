@@ -3,9 +3,11 @@ package hyperv
 // VMDiskEntry is one VM<->VHD path association, sourced from
 // Get-VM | Get-VMHardDiskDrive on the local Hyper-V host.
 type VMDiskEntry struct {
-	VMId   string `json:"VMId"`
-	VMName string `json:"VMName"`
-	Path   string `json:"Path"`
+	VMId               string `json:"VMId"`
+	VMName             string `json:"VMName"`
+	Path               string `json:"Path"`
+	ControllerNumber   int    `json:"ControllerNumber"`
+	ControllerLocation int    `json:"ControllerLocation"`
 }
 
 // DiskMap resolves a raw Hyper-V Virtual Storage Device Perfmon instance

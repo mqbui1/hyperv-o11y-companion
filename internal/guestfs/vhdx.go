@@ -41,6 +41,13 @@ import (
 // log and skip the VM, not retry.
 var ErrUnsupported = errors.New("guestfs: unsupported VHDX layout")
 
+// ErrDifferencingDisk is returned when the VHDX has a parent (a
+// checkpoint/differencing disk) — a distinct, comparable sentinel (rather
+// than an inline fmt.Errorf) so callers can classify it as its own
+// low-cardinality skip reason (see ClassifySkipReason in skipreason.go)
+// instead of lumping it in with every other ErrUnsupported case.
+var ErrDifferencingDisk = fmt.Errorf("%w: differencing disk (has parent) — checkpoint/parent-chain VHDX not supported in v1", ErrUnsupported)
+
 const (
 	identifierSignature = "vhdxfile"
 	regionSignature     = 0x69676572         // "regi" little-endian uint32
@@ -111,7 +118,8 @@ type Reader struct {
 	blockSize       uint64 // File Parameters, bytes, power of 2 in [1MB,256MB]
 	virtualDiskSize uint64
 	hasParent       bool
-	bat             []byte // raw BAT region bytes, indexed manually per block
+	bat             []byte  // raw BAT region bytes, indexed manually per block
+	parent          *Reader // nil for root disks; non-nil for differencing chains (2f)
 }
 
 // Open parses a VHDX's header/region/metadata structures and returns a
@@ -122,7 +130,7 @@ func Open(path string) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	r, err := newReader(f)
+	r, err := newReader(f, 0)
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -130,13 +138,21 @@ func Open(path string) (*Reader, error) {
 	return r, nil
 }
 
-func (r *Reader) Close() error { return r.f.Close() }
+func (r *Reader) Close() error {
+	err := r.f.Close()
+	if r.parent != nil {
+		if perr := r.parent.Close(); err == nil {
+			err = perr
+		}
+	}
+	return err
+}
 
 // Size returns the virtual disk size in bytes (the guest-visible disk
 // size, not the host file's on-disk size).
 func (r *Reader) Size() int64 { return int64(r.virtualDiskSize) }
 
-func newReader(f *os.File) (*Reader, error) {
+func newReader(f *os.File, depth int) (*Reader, error) {
 	ident := make([]byte, len(identifierSignature))
 	if _, err := f.ReadAt(ident, 0); err != nil {
 		return nil, fmt.Errorf("reading identifier: %w", err)
@@ -170,9 +186,6 @@ func newReader(f *os.File) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	if hasParent {
-		return nil, fmt.Errorf("%w: differencing disk (has parent) — checkpoint/parent-chain VHDX not supported in v1", ErrUnsupported)
-	}
 	virtualDiskSize, err := readVirtualDiskSize(f, metaOff)
 	if err != nil {
 		return nil, err
@@ -183,7 +196,17 @@ func newReader(f *os.File) (*Reader, error) {
 		return nil, fmt.Errorf("reading BAT region: %w", err)
 	}
 
-	return &Reader{f: f, blockSize: blockSize, virtualDiskSize: virtualDiskSize, hasParent: hasParent, bat: bat}, nil
+	// Resolve parent chain for differencing disks (2f). Blocks in the child
+	// that are NOT_PRESENT will be read from the parent in ReadAt.
+	var parent *Reader
+	if hasParent {
+		parent, err = openParentChain(f, metaOff, depth)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &Reader{f: f, blockSize: blockSize, virtualDiskSize: virtualDiskSize, hasParent: hasParent, bat: bat, parent: parent}, nil
 }
 
 // readRegionTable reads and validates one region-table copy (primary or
@@ -323,8 +346,15 @@ func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
 
 		switch state {
 		case batStateNotPresent, batStateUndefined, batStateZero, batStateUnmapped:
-			for i := 0; i < n; i++ {
-				p[total+i] = 0
+			if r.parent != nil {
+				// Differencing disk: block not in this layer — fall through to parent.
+				if _, err := r.parent.ReadAt(p[total:total+n], int64(logicalOff)); err != nil {
+					return total, fmt.Errorf("guestfs: reading block %d from parent chain: %w", blockIdx, err)
+				}
+			} else {
+				for i := 0; i < n; i++ {
+					p[total+i] = 0
+				}
 			}
 		case batStateFullyPresent:
 			physOff := fileOffsetMB*1024*1024 + blockRelOff

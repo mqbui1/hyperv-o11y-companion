@@ -140,11 +140,13 @@ func TestEndToEnd_XFSRootPartition(t *testing.T) {
 	}
 }
 
-func TestOpen_DifferencingDiskUnsupported(t *testing.T) {
+func TestOpen_DifferencingDisk_NoParentLocator(t *testing.T) {
+	// A synthetic differencing disk with hasParent=true but no Parent Locator
+	// metadata item → ErrChainCorrupt (wraps ErrUnsupported).
 	path := buildTestVHDX(t, true)
 	_, err := Open(path)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Open(differencing disk) err = %v, want ErrUnsupported", err)
+	if !errors.Is(err, ErrChainCorrupt) {
+		t.Fatalf("Open(differencing, no parent locator) err = %v, want ErrChainCorrupt", err)
 	}
 }
 

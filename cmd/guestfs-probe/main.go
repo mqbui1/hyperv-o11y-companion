@@ -15,6 +15,7 @@ import (
 	"flag"
 	"log"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -155,21 +156,12 @@ func buildDiskMap(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, st
 }
 
 // sampleGuestFS closes gap #4 for Linux (and Windows) guests with zero
-// in-guest footprint: for each VM in the disk map matching
-// cfg.GuestFS.VMInclude, opens its VHDX read-only on the host
-// (internal/guestfs.FilesystemUsedPercent) and exports
-// vm.guest.filesystem.used_percent. A VM with an unsupported layout
-// (differencing disk, LVM, non-XFS filesystem) or any other read error is
-// logged, counted (skipCounter, tagged by skip_reason), and skipped —
-// never fatal to the other VMs' probe cycle, same fallback philosophy as
-// host-companion's sampleGuestProbe.
-//
-// v1 limitation: hyperv.DiskMap.ByID keeps only the last VMDiskEntry seen
-// per VM (it was originally just a .vmgs-instance fallback, see
-// internal/hyperv/types.go), so a VM with more than one attached VHDX is
-// not guaranteed to resolve to its boot/root disk here. Fine for
-// single-disk VMs (the common case); multi-disk VMs are a known follow-up,
-// not a v1 requirement.
+// in-guest footprint. For each VM in the disk map matching VMInclude, it
+// tries every attached VHDX in controller order (lowest ControllerNumber,
+// ControllerLocation first) and reports vm.guest.filesystem.used_percent
+// for the first disk that yields a readable filesystem. Skip counts are
+// recorded per disk attempt; 2i failure/stale metrics are only emitted at
+// the VM level after all of that VM's disks have been exhausted.
 func sampleGuestFS(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, state *diskMapState, fsGauge metric.Float64Gauge, skipCounter metric.Int64Counter, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
 	m := state.get()
 	if m == nil {
@@ -177,58 +169,81 @@ func sampleGuestFS(ctx context.Context, cfg *config.GuestFSProbeServiceConfig, s
 		return
 	}
 
-	for _, entry := range m.ByID {
-		if !matchesInclude(entry.VMName, cfg.GuestFS.VMInclude) {
+	for vmName, disks := range groupByVM(m) {
+		if !matchesInclude(vmName, cfg.GuestFS.VMInclude) {
 			continue
 		}
-		if entry.Path == "" {
-			continue
-		}
-		probeOneVM(ctx, entry, fsGauge, skipCounter, probeFailure, probeStale, lastSuccess)
+		probeVMDisks(ctx, vmName, disks, fsGauge, skipCounter, probeFailure, probeStale, lastSuccess)
 	}
 }
 
-// probeOneVM probes a single VM's VHDX and recovers from any panic while
-// doing so. A malformed/corrupt VHDX is a certainty at fleet scale, not
-// an edge case — one VM's bad disk image must not crash the probe cycle
-// (and take every other VM's probe down with it) or crash-loop the whole
-// service. A recovered panic is counted under skip_reason="panic", same
-// as any other classified skip, so it shows up in the same
-// coverage-roadmap telemetry rather than silently vanishing into a log
-// line.
-//
-// 2i: on success, records the success time in lastSuccess and emits
-// probeStale=0. On any failure (including panic), increments probeFailure
-// and emits probeStale = seconds since last success (24h sentinel if this
-// VM has never succeeded).
-func probeOneVM(ctx context.Context, entry hyperv.VMDiskEntry, fsGauge metric.Float64Gauge, skipCounter metric.Int64Counter, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("guestfs probe: vm=%s: recovered from panic: %v", entry.VMName, r)
-			skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", "panic")))
-			probeFailure.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("vm.name", entry.VMName),
-				attribute.String("reason", "other"),
-			))
-			recordProbeStale(ctx, entry.VMName, lastSuccess, probeStale)
+// groupByVM groups all entries in diskMap.ByPath by VMName, returning a
+// map of VMName -> disks sorted by (ControllerNumber, ControllerLocation).
+// Entries with an empty VMName or Path are excluded.
+func groupByVM(m *hyperv.DiskMap) map[string][]hyperv.VMDiskEntry {
+	grouped := map[string][]hyperv.VMDiskEntry{}
+	for _, e := range m.ByPath {
+		if e.VMName == "" || e.Path == "" {
+			continue
 		}
-	}()
+		grouped[e.VMName] = append(grouped[e.VMName], e)
+	}
+	for name := range grouped {
+		sort.Slice(grouped[name], func(i, j int) bool {
+			a, b := grouped[name][i], grouped[name][j]
+			if a.ControllerNumber != b.ControllerNumber {
+				return a.ControllerNumber < b.ControllerNumber
+			}
+			return a.ControllerLocation < b.ControllerLocation
+		})
+	}
+	return grouped
+}
 
-	pct, err := guestfs.FilesystemUsedPercent(entry.Path)
-	if err != nil {
-		reason := guestfs.ClassifySkipReason(err)
-		log.Printf("guestfs probe: vm=%s: %v", entry.VMName, err)
-		skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", string(reason))))
-		probeFailure.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("vm.name", entry.VMName),
-			attribute.String("reason", "other"),
-		))
-		recordProbeStale(ctx, entry.VMName, lastSuccess, probeStale)
+// probeVMDisks tries each disk in controller order. It records a
+// skip_reason counter for each disk that fails, then stops at the first
+// disk that returns a readable filesystem percent. If all disks fail,
+// it records the 2i failure counter and stale gauge for the VM.
+func probeVMDisks(ctx context.Context, vmName string, disks []hyperv.VMDiskEntry, fsGauge metric.Float64Gauge, skipCounter metric.Int64Counter, probeFailure metric.Int64Counter, probeStale metric.Float64Gauge, lastSuccess map[string]time.Time) {
+	for _, disk := range disks {
+		pct, skipReason, panicked := tryOneDisk(disk.Path)
+		if panicked {
+			log.Printf("guestfs probe: vm=%s disk=%s: recovered from panic", vmName, disk.Path)
+			skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", "panic")))
+			continue
+		}
+		if skipReason != "" {
+			log.Printf("guestfs probe: vm=%s disk=%s: %s", vmName, disk.Path, skipReason)
+			skipCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("skip_reason", skipReason)))
+			continue
+		}
+		// First disk that succeeds — record and return.
+		lastSuccess[vmName] = time.Now()
+		fsGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", vmName)))
+		probeStale.Record(ctx, 0, metric.WithAttributes(attribute.String("vm.name", vmName)))
 		return
 	}
-	lastSuccess[entry.VMName] = time.Now()
-	fsGauge.Record(ctx, pct, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
-	probeStale.Record(ctx, 0, metric.WithAttributes(attribute.String("vm.name", entry.VMName)))
+	// All disks failed — emit 2i failure + stale for this VM.
+	probeFailure.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("vm.name", vmName),
+		attribute.String("reason", "other"),
+	))
+	recordProbeStale(ctx, vmName, lastSuccess, probeStale)
+}
+
+// tryOneDisk probes a single VHDX path with panic recovery.
+// Returns (pct, skipReason, panicked). On success skipReason is "".
+func tryOneDisk(path string) (pct float64, skipReason string, panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = true
+		}
+	}()
+	p, err := guestfs.FilesystemUsedPercent(path)
+	if err != nil {
+		return 0, string(guestfs.ClassifySkipReason(err)), false
+	}
+	return p, "", false
 }
 
 // recordProbeStale emits hyperv.guest_probe.stale_seconds for vmName. If the

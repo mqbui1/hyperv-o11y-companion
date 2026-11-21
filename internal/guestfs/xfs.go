@@ -13,6 +13,7 @@
 package guestfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 )
@@ -51,6 +52,21 @@ func (u XFSUsage) UsedPercent() (float64, bool) {
 // being ext4, which v1 doesn't parse.
 var ErrNotXFS = fmt.Errorf("guestfs: not an XFS superblock (magic mismatch — ext4/other filesystems not supported in v1)")
 
+// luksMagic is the first 6 bytes of a LUKS1 or LUKS2 primary header
+// ("LUKS" + 0xba 0xbe), identical for both versions. Checked ahead of the
+// generic ErrNotXFS case so an encrypted root partition gets its own
+// distinct, actionable skip reason instead of being misreported as "not
+// yet supported filesystem" — v1 has no decryption support either way,
+// but the reason matters for coverage prioritization (see
+// ClassifySkipReason in skipreason.go).
+var luksMagic = []byte{'L', 'U', 'K', 'S', 0xba, 0xbe}
+
+// ErrLUKS is returned when the partition's first bytes match the LUKS
+// header magic — the root filesystem is encrypted and v1 cannot read
+// used-space without the passphrase/key, by design (this probe never
+// prompts for or stores guest secrets).
+var ErrLUKS = fmt.Errorf("guestfs: LUKS-encrypted partition (root filesystem is encrypted; not supported in v1)")
+
 // ReadXFSSuperblock reads and parses the XFS superblock located at the
 // start of part on r.
 func ReadXFSSuperblock(r *Reader, part Partition) (XFSUsage, error) {
@@ -60,6 +76,9 @@ func ReadXFSSuperblock(r *Reader, part Partition) (XFSUsage, error) {
 	}
 	magic := binary.BigEndian.Uint32(buf[0:4])
 	if magic != xfsMagic {
+		if bytes.Equal(buf[0:len(luksMagic)], luksMagic) {
+			return XFSUsage{}, ErrLUKS
+		}
 		return XFSUsage{}, ErrNotXFS
 	}
 	return XFSUsage{
