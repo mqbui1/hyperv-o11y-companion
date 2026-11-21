@@ -23,7 +23,7 @@ import (
 //  1. XFS superblock — RHEL/Rocky/AlmaLinux default.
 //  2. NTFS $Bitmap — Windows Server default (2h).
 //  3. Neither → ErrNotXFS → skip_reason=ext4_btrfs (covers all other
-//     Linux filesystems too; a dedicated ext4 parser is a future item).\
+//     Linux filesystems too; a dedicated ext4 parser is a future item).
 func FilesystemUsedPercent(path string) (float64, error) {
 	r, err := Open(path)
 	if err != nil {
